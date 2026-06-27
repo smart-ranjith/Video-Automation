@@ -1,0 +1,30 @@
+name: Daily YouTube Shorts Automator
+
+on:
+  schedule:
+    - cron: '0 14 * * *' # Runs at 14:00 UTC every day
+  workflow_dispatch: # This adds a button so you can trigger it manually anytime
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install System Requirements (for MoviePy)
+        run: sudo apt-get install -y imagemagick
+
+      - name: Install Python Libraries
+        run: pip install -r requirements.txt
+
+      - name: Run the Generator Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+        run: python generator.py
