@@ -126,7 +126,7 @@ def upload_to_youtube(video_file, title, description):
             "tags": ["shorts", "space", "facts", "automation"]
         },
         "status": {
-            "privacyStatus": "private",  # Change to "public" once you trust the system!
+            "privacyStatus": "public",  # Change to "public" once you trust the system!
             "selfDeclaredMadeForKids": False
         }
     }
