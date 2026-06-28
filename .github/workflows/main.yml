@@ -2,18 +2,18 @@ name: Daily YouTube Shorts Automator
 
 on:
   schedule:
-    - cron: '0 14 * * *' # Runs at 14:00 UTC every day
-  workflow_dispatch: # This adds a button so you can trigger it manually anytime
+    - cron: '0 14 * * *' 
+  workflow_dispatch: 
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
