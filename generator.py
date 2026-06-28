@@ -18,6 +18,7 @@ from googleapiclient.http import MediaFileUpload
 # This pulls your secure keys from GitHub Actions (or your local computer)
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "YOUR_PEXELS_API_KEY")
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "56482907-f2ad06f4b528c159b29ad37c6")
 
 VOICE = "en-US-ChristopherNeural"
 OUTPUT_AUDIO = "voiceover.mp3"
@@ -110,10 +111,33 @@ def parse_srt(filename):
 
 # --- 5. THE EDITOR (MOVIEPY) ---
 def assemble_video():
-    print("\n🎬 Assembling final video with animated captions...")
+    print("\n🎬 Assembling final video with animated captions and auto-music...")
     
-    audio = AudioFileClip(OUTPUT_AUDIO)
-    audio_duration = audio.duration
+    # 1. Load the Voiceover
+    voice_audio = AudioFileClip(OUTPUT_AUDIO)
+    audio_duration = voice_audio.duration
+    
+    # 2. Download and Load Background Music dynamically!
+    bgm_file = download_music()
+    
+    if bgm_file:
+        import moviepy.audio.fx.all as afx
+        bgm = AudioFileClip(bgm_file)
+        
+        # Loop the music to match the voiceover length exactly
+        bgm = bgm.fx(afx.audio_loop, duration=audio_duration)
+        
+        # Drop the volume to 10% so the AI voice remains clear
+        bgm = bgm.fx(afx.volumex, 0.1)
+        
+        # Mix them together
+        final_audio = CompositeAudioClip([voice_audio, bgm])
+    else:
+        # Fallback just in case Pixabay goes down
+        final_audio = voice_audio
+        
+# 3. Prepare the Video Clips (Proceed with video stitching as normal)
+# ... rest of your assemble_video code here ...
     
     video_folder = "videos"
     video_files = [f for f in os.listdir(video_folder) if f.endswith(".mp4")]
@@ -204,6 +228,36 @@ def upload_to_youtube(video_file, title, description):
 
     print(f"✅ Success! Video uploaded to your channel.")
     print(f"🔗 Link: https://youtu.be/{response['id']}")
+
+# --- THE MUSIC (PIXABAY API) ---
+def download_music():
+    print("\n🎵 Fetching copyright-free background music from Pixabay...")
+    
+    # We search for cinematic or ambient music suitable for voiceovers
+    url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=cinematic+ambient"
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        data = response.json()
+        if len(data["hits"]) > 0:
+            # Pick a random track from the search results
+            import random
+            track = random.choice(data["hits"])
+            audio_url = track["audio"]
+            
+            print(f"⬇️ Downloading music: {track['name']}...")
+            audio_data = requests.get(audio_url).content
+            
+            with open("background_music.mp3", "wb") as f:
+                f.write(audio_data)
+            print("✅ Background music saved!")
+            return "background_music.mp3"
+        else:
+            print("⚠️ No music found for that query.")
+    else:
+        print(f"❌ Error connecting to Pixabay: {response.status_code}")
+    
+    return None
 
 # --- MASTER FUNCTION ---
 async def main():
