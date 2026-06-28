@@ -35,15 +35,31 @@ def generate_script():
     - "script": The spoken text of the video.
     - "image_prompts": A list of 5 short visual descriptions (max 5 words each) matching the script.
     """
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.7
-        )
-    )
-    return json.loads(response.text)
+    
+    # Bulletproof Retry Loop (Tries 3 times before giving up)
+    import time
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.7
+                )
+            )
+            return json.loads(response.text)
+            
+        except Exception as e:
+            print(f"⚠️ AI Busy (Attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                print("⏳ Waiting 15 seconds and trying again...")
+                time.sleep(15)
+            else:
+                print("❌ AI is completely overloaded today. Crashing script.")
+                raise e
 
 # --- 3. THE VOICE & SUBTITLES (EDGE-TTS) ---
 async def generate_audio(text):
