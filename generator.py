@@ -18,7 +18,7 @@ from googleapiclient.http import MediaFileUpload
 # This pulls your secure keys from GitHub Actions (or your local computer)
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "YOUR_PEXELS_API_KEY")
-PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "56482907-f2ad06f4b528c159b29ad37c6")
+PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY", "YOUR_PIXABAY_API_KEY")
 
 VOICE = "en-US-ChristopherNeural"
 OUTPUT_AUDIO = "voiceover.mp3"
