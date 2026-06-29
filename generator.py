@@ -107,7 +107,7 @@ def assemble_video():
     bg_video = concatenate_videoclips(clips, method="compose").set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
     
     text_clips = [TextClip(text, fontsize=70, color='white', font='Arial', stroke_color='black', stroke_width=3, method='caption', size=(900, None)).set_start(start).set_end(end).set_position(('center', 'center')) for start, end, text in parse_srt("subtitles.srt")]
-    cta_clip = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2).set_duration(5).set_start(5).set_position(('center', 'bottom'))
+    cta_clip = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', method='label')
     
     final = CompositeVideoClip([bg_video] + text_clips + [cta_clip])
     final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
