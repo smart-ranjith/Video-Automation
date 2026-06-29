@@ -17,12 +17,16 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies
+      - name: Install and Configure ImageMagick
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick ffmpeg
-          # Fix ImageMagick security policy to allow TextClip to function
-          sudo sed -i 's/rights="none" pattern="LABEL"/rights="read|write" pattern="LABEL"/' /etc/ImageMagick-6/policy.xml
+          sudo apt-get install -y imagemagick
+          # Overwrite the policy file entirely to allow all read/write operations
+          echo '<policymap>
+            <policy domain="coder" rights="read|write" pattern="LABEL" />
+            <policy domain="coder" rights="read|write" pattern="PDF" />
+            <policy domain="path" rights="read|write" pattern="@*" />
+          </policymap>' | sudo tee /etc/ImageMagick-6/policy.xml
 
       - name: Install Python requirements
         run: |
