@@ -99,31 +99,37 @@ def assemble_video():
     print("\n🎬 Assembling final video...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     bgm_file = download_music()
+    
+    # 1. Setup Audio
     bgm = AudioFileClip(bgm_file).fx(afx.audio_loop, duration=voice_audio.duration).fx(afx.volumex, 0.1) if bgm_file else None
+    final_audio = CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio
     
+    # 2. Setup Video Clips
     video_files = [f for f in os.listdir("videos") if f.endswith(".mp4")]
-    clip_length = math.ceil(voice_audio.duration / len(video_files))
-    
-    # Ensure every clip has a duration set
+    clip_len = voice_audio.duration / len(video_files)
     clips = []
     for f in video_files:
-        clip = VideoFileClip(os.path.join("videos", f)).subclip(0, min(clip_length, 60)).resize(height=1920, width=1080)
-        clip = clip.set_duration(min(clip_length, 60)) # Explicitly setting duration
-        clips.append(clip)
+        c = VideoFileClip(os.path.join("videos", f)).subclip(0, min(clip_len, 60)).resize(height=1920, width=1080)
+        c = c.set_duration(min(clip_len, 60))
+        clips.append(c)
     
-    bg_video = concatenate_videoclips(clips, method="compose")
-    bg_video = bg_video.set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
-    bg_video = bg_video.set_duration(voice_audio.duration) # Ensure background duration matches audio
+    bg_video = concatenate_videoclips(clips, method="compose").set_audio(final_audio)
+    bg_video = bg_video.set_duration(voice_audio.duration)
     
-    # Subtitles
-    text_clips = [TextClip(text, fontsize=70, color='white', font='Arial', stroke_color='black', stroke_width=3, method='caption', size=(900, None)).set_start(start).set_end(end) for start, end, text in parse_srt("subtitles.srt")]
+    # 3. Setup Captions (Crucial: set_duration for every clip)
+    text_clips = []
+    for start, end, text in parse_srt("subtitles.srt"):
+        txt = TextClip(text, fontsize=70, color='white', font='Arial', stroke_color='black', stroke_width=3, method='caption', size=(900, None))
+        txt = txt.set_start(start).set_end(end).set_duration(end - start) 
+        text_clips.append(txt)
     
-    # CTA
-    cta_clip = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2).set_duration(5).set_start(5).set_position(('center', 'bottom'))
+    # 4. CTA (Crucial: set_duration)
+    cta = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2)
+    cta = cta.set_start(5).set_duration(5).set_position(('center', 'bottom'))
     
-    # Combine
-    final = CompositeVideoClip([bg_video] + text_clips + [cta_clip])
-    final = final.set_duration(voice_audio.duration) # Final safety check for duration
+    # 5. Combine
+    final = CompositeVideoClip([bg_video] + text_clips + [cta])
+    final = final.set_duration(voice_audio.duration)
     
     final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
     final.close()
