@@ -6,6 +6,7 @@ import math
 import re
 import pickle
 import random
+import time
 import edge_tts
 from google import genai
 from google.genai import types
@@ -35,243 +36,101 @@ def generate_script():
     - "script": The spoken text of the video.
     - "image_prompts": A list of 5 short visual descriptions (max 5 words each) matching the script.
     """
-    
-    # Bulletproof Retry Loop (Tries 3 times before giving up)
-    import time
     max_retries = 3
-    
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.7
-                )
+                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.7)
             )
             return json.loads(response.text)
-            
         except Exception as e:
-            print(f"⚠️ AI Busy (Attempt {attempt + 1}/{max_retries}): {e}")
-            if attempt < max_retries - 1:
-                print("⏳ Waiting 15 seconds and trying again...")
-                time.sleep(15)
-            else:
-                print("❌ AI is completely overloaded today. Crashing script.")
-                raise e
+            print(f"⚠️ AI Busy: {e}")
+            if attempt < max_retries - 1: time.sleep(15)
+            else: raise e
 
-# --- 3. THE VOICE & SUBTITLES (EDGE-TTS) ---
+# --- 3. THE VOICE & SUBTITLES ---
 async def generate_audio(text):
-    print(f"🎙️ Generating voiceover and subtitle tracks ({VOICE})...")
     communicate = edge_tts.Communicate(text, VOICE)
     submaker = edge_tts.SubMaker()
-    
     with open(OUTPUT_AUDIO, "wb") as fp:
         async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                fp.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                submaker.feed(chunk)
-                
-    with open("subtitles.srt", "w", encoding="utf-8") as f:
-        f.write(submaker.get_srt())
-        
-    print(f"✅ Success! Audio and subtitles.srt saved.")
+            if chunk["type"] == "audio": fp.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary": submaker.feed(chunk)
+    with open("subtitles.srt", "w", encoding="utf-8") as f: f.write(submaker.get_srt())
 
-# --- 4. THE VISUALS (PEXELS API) ---
+# --- 4. THE VISUALS & MUSIC ---
 def download_videos(prompts):
-    print("\n🎬 Searching and downloading videos from Pexels...")
     headers = {"Authorization": PEXELS_API_KEY}
-    
-    if not os.path.exists("videos"):
-        os.makedirs("videos")
-
+    if not os.path.exists("videos"): os.makedirs("videos")
     for index, prompt in enumerate(prompts):
-        print(f"🔍 Searching for: {prompt}")
         url = f"https://api.pexels.com/videos/search?query={prompt}&orientation=portrait&per_page=1"
         response = requests.get(url, headers=headers)
-        
         if response.status_code == 200:
             data = response.json()
             if len(data["videos"]) > 0:
                 video_url = data["videos"][0]["video_files"][0]["link"]
-                print(f"⬇️ Downloading video {index + 1}...")
-                vid_data = requests.get(video_url).content
-                with open(f"videos/clip_{index}.mp4", "wb") as f:
-                    f.write(vid_data)
-                print(f"✅ Saved clip_{index}.mp4")
-            else:
-                print(f"⚠️ No video found for '{prompt}'")
-        else:
-            print(f"❌ Error connecting to Pexels: {response.status_code}")
+                with open(f"videos/clip_{index}.mp4", "wb") as f: f.write(requests.get(video_url).content)
 
-# --- THE MUSIC (PIXABAY API) ---
 def download_music():
-    print("\n🎵 Fetching copyright-free background music from Pixabay...")
     url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=cinematic+ambient"
     response = requests.get(url)
-    
     if response.status_code == 200:
         data = response.json()
         if len(data["hits"]) > 0:
             track = random.choice(data["hits"])
-            audio_url = track["audio"]
-            print(f"⬇️ Downloading music: {track['name']}...")
-            audio_data = requests.get(audio_url).content
-            
-            with open("background_music.mp3", "wb") as f:
-                f.write(audio_data)
-            print("✅ Background music saved!")
+            with open("background_music.mp3", "wb") as f: f.write(requests.get(track["audio"]).content)
             return "background_music.mp3"
-        else:
-            print("⚠️ No music found for that query.")
-    else:
-        print(f"❌ Error connecting to Pixabay: {response.status_code}")
-    
     return None
 
-# --- Helper: Parse SRT Subtitles ---
 def parse_srt(filename):
-    with open(filename, "r", encoding="utf-8") as f:
-        content = f.read()
+    with open(filename, "r", encoding="utf-8") as f: content = f.read()
     pattern = re.compile(r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.*)")
-    matches = pattern.findall(content)
-    
-    def time_to_sec(t_str):
-        h, m, s = t_str.split(':')
-        s, ms = s.split(',')
-        return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000.0
-
     subtitles = []
-    for match in matches:
-        start = time_to_sec(match[1])
-        end = time_to_sec(match[2])
-        text = match[3].strip()
-        subtitles.append((start, end, text))
+    for match in pattern.findall(content):
+        start = sum(x * int(t) for x, t in zip([3600, 60, 1], match[1].split(':')[:2] + [match[1].split(':')[2].split(',')[0]])) + int(match[1].split(',')[1])/1000.0
+        end = sum(x * int(t) for x, t in zip([3600, 60, 1], match[2].split(':')[:2] + [match[2].split(':')[2].split(',')[0]])) + int(match[2].split(',')[1])/1000.0
+        subtitles.append((start, end, match[3].strip()))
     return subtitles
 
-# --- 5. THE EDITOR (MOVIEPY) ---
+# --- 5. THE EDITOR ---
 def assemble_video():
-    print("\n🎬 Assembling final video with animated captions and auto-music...")
-    
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
-    audio_duration = voice_audio.duration
-    
     bgm_file = download_music()
+    bgm = AudioFileClip(bgm_file).fx(afx.audio_loop, duration=voice_audio.duration).fx(afx.volumex, 0.1) if bgm_file else None
     
-    if bgm_file:
-        bgm = AudioFileClip(bgm_file)
-        bgm = bgm.fx(afx.audio_loop, duration=audio_duration)
-        bgm = bgm.fx(afx.volumex, 0.1)
-        final_audio = CompositeAudioClip([voice_audio, bgm])
-    else:
-        final_audio = voice_audio
-        
-    video_folder = "videos"
-    video_files = [f for f in os.listdir(video_folder) if f.endswith(".mp4")]
+    video_files = [f for f in os.listdir("videos") if f.endswith(".mp4")]
+    clip_length = math.ceil(voice_audio.duration / len(video_files))
+    clips = [VideoFileClip(os.path.join("videos", f)).subclip(0, min(clip_length, 60)).resize(height=1920, width=1080) for f in video_files]
     
-    clip_length = math.ceil(audio_duration / len(video_files))
-    video_clips = []
+    bg_video = concatenate_videoclips(clips, method="compose").set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
     
-    for i, file in enumerate(video_files):
-        filepath = os.path.join(video_folder, file)
-        clip = VideoFileClip(filepath)
-        end_time = min(clip_length, clip.duration)
-        trimmed_clip = clip.subclip(0, end_time)
-        resized_clip = trimmed_clip.resize(height=1920, width=1080)
-        video_clips.append(resized_clip)
+    text_clips = [TextClip(text, fontsize=70, color='white', font='Arial', stroke_color='black', stroke_width=3, method='caption', size=(900, None)).set_start(start).set_end(end).set_position(('center', 'center')) for start, end, text in parse_srt("subtitles.srt")]
+    cta_clip = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2).set_duration(5).set_start(5).set_position(('center', 'bottom'))
+    
+    final = CompositeVideoClip([bg_video] + text_clips + [cta_clip])
+    final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
 
-    background_video = concatenate_videoclips(video_clips, method="compose")
-    background_video = background_video.set_audio(final_audio)
-    
-    subtitle_data = parse_srt("subtitles.srt")
-    text_clips = []
-    
-    for start, end, text in subtitle_data:
-        txt_clip = TextClip(
-            text, 
-            fontsize=70, 
-            color='white', 
-            font='Arial', 
-            stroke_color='black', 
-            stroke_width=3,
-            method='caption',
-            size=(900, None)
-        )
-        txt_clip = txt_clip.set_start(start).set_end(end).set_position(('center', 'center'))
-        text_clips.append(txt_clip)
-    
-    final_video = CompositeVideoClip([background_video] + text_clips)
-    
-    print("⏳ Rendering final_short.mp4 with subtitles...")
-    final_video.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac", logger=None)
-    
-    final_video.close()
-    voice_audio.close()
-    if bgm_file:
-        bgm.close()
-    print("✅ Complete video with centered subtitles rendered successfully!")
-
-# --- 6. THE DELIVERY (YOUTUBE API) ---
+# --- 6. THE DELIVERY ---
 def upload_to_youtube(video_file, title, description):
-    print("\n🚀 Starting YouTube Upload Process...")
-    credentials = None
-
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            credentials = pickle.load(token)
-
-    if not credentials or not credentials.valid:
-        if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file("client_secrets.json", SCOPES)
-            credentials = flow.run_local_server(port=0)
-        with open("token.pickle", "wb") as token:
-            pickle.dump(credentials, token)
-
+    time.sleep(random.uniform(0, 900))
+    with open("token.pickle", "rb") as token: credentials = pickle.load(token)
     youtube = build("youtube", "v3", credentials=credentials)
-
-    request_body = {
-        "snippet": {
-            "categoryId": "22",
-            "title": title,
-            "description": description,
-            "tags": ["shorts", "space", "facts", "automation"]
-        },
-        "status": {
-            "privacyStatus": "public",
-            "selfDeclaredMadeForKids": False
-        }
-    }
-
-    media_file = MediaFileUpload(video_file, chunksize=-1, resumable=True)
     
-    print("⏳ Uploading to YouTube...")
-    response = youtube.videos().insert(
-        part="snippet,status",
-        body=request_body,
-        media_body=media_file
-    ).execute()
+    media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
+    body = {"snippet": {"categoryId": "22", "title": title, "description": description, "tags": ["shorts", "space"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+    
+    response = youtube.videos().insert(part="snippet,status", body=body, media_body=media).execute()
+    with open("report.txt", "a") as f: f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Uploaded: {title}\n")
+    print(f"✅ Success! Link: https://youtu.be/{response['id']}")
 
-    print(f"✅ Success! Video uploaded to your channel.")
-    print(f"🔗 Link: https://youtu.be/{response['id']}")
-
-# --- MASTER FUNCTION ---
 async def main():
     content = generate_script()
-    
-    print("\n--- GENERATED SCRIPT ---")
-    print(content["script"])
-    
     await generate_audio(content["script"])
     download_videos(content["image_prompts"])
     assemble_video()
-    
-    upload_to_youtube("final_short.mp4", "Mind-Blowing Space Facts 🌌 #shorts #space", "Generated entirely by AI. Subscribe for daily videos!")
-    
-    print("\n🎉 AUTOMATION COMPLETE! See you tomorrow.")
+    upload_to_youtube("final_short.mp4", "Mind-Blowing Space Facts 🌌 #shorts", "Subscribe for daily space facts!")
 
 if __name__ == "__main__":
     asyncio.run(main())
