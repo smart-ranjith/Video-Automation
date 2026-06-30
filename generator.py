@@ -128,7 +128,8 @@ def assemble_video():
         
         clip = clip.set_start(start).set_duration(end - start)
         clips.append(clip)
-    
+    print(f"DEBUG: Clips list is: {clips}")
+    print(f"DEBUG: Number of clips: {len(clips)}")
     bg_video = CompositeVideoClip(clips).set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
     
     # 2. Dynamic Text: Yellow, bold, and high-impact
