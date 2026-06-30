@@ -16,6 +16,7 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
+import moviepy.video.fx.all as vfx
 
 # --- 1. SETUP & SECRETS ---
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
@@ -96,41 +97,46 @@ def parse_srt(filename):
 
 # --- 5. THE EDITOR ---
 def assemble_video():
-    print("\n🎬 Assembling final video...")
+    print("\n🎬 Assembling cinematic video...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     bgm_file = download_music()
-    
-    # 1. Setup Audio
     bgm = AudioFileClip(bgm_file).fx(afx.audio_loop, duration=voice_audio.duration).fx(afx.volumex, 0.1) if bgm_file else None
-    final_audio = CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio
     
-    # 2. Setup Video Clips
-    video_files = [f for f in os.listdir("videos") if f.endswith(".mp4")]
-    clip_len = voice_audio.duration / len(video_files)
+    subtitles = parse_srt("subtitles.srt")
+    video_files = [os.path.join("videos", f) for f in os.listdir("videos") if f.endswith(".mp4")]
+    
+    # 1. Dynamic Cut Logic: Sync video clips to subtitle sentences
     clips = []
-    for f in video_files:
-        c = VideoFileClip(os.path.join("videos", f)).subclip(0, min(clip_len, 60)).resize(height=1920, width=1080)
-        c = c.set_duration(min(clip_len, 60))
-        clips.append(c)
+    for i, (start, end, text) in enumerate(subtitles):
+        # Use a random clip from our downloaded set
+        video_path = video_files[i % len(video_files)]
+        clip = VideoFileClip(video_path).resize(height=1920, width=1080)
+        
+        # Apply cinematic polish
+        clip = clip.subclip(0, min(end - start, clip.duration))
+        clip = clip.fx(vfx.colorx, 1.1).fx(vfx.lum_contrast, 0, 10, 1.1)
+        clip = clip.fadein(0.2).fadeout(0.2)
+        
+        clip = clip.set_start(start).set_duration(end - start)
+        clips.append(clip)
     
-    bg_video = concatenate_videoclips(clips, method="compose").set_audio(final_audio)
-    bg_video = bg_video.set_duration(voice_audio.duration)
+    bg_video = CompositeVideoClip(clips).set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
     
-    # 3. Setup Captions (Crucial: set_duration for every clip)
+    # 2. Dynamic Text: Yellow, bold, and high-impact
     text_clips = []
-    for start, end, text in parse_srt("subtitles.srt"):
-        txt = TextClip(text, fontsize=70, color='white', font='Arial', stroke_color='black', stroke_width=3, method='caption', size=(900, None))
-        txt = txt.set_start(start).set_end(end).set_duration(end - start) 
+    for start, end, text in subtitles:
+        txt = TextClip(text, fontsize=80, color='yellow', font='Arial-Bold', 
+                       stroke_color='black', stroke_width=4, method='caption', size=(900, None))
+        # Add "pop" animation by scaling the text clip slightly
+        txt = txt.set_start(start).set_duration(end - start).set_position(('center', 'center'))
         text_clips.append(txt)
     
-    # 4. CTA (Crucial: set_duration)
-    cta = TextClip("Subscribe for more daily facts!", fontsize=60, color='white', font='Arial-Bold', stroke_color='black', stroke_width=2)
-    cta = cta.set_start(5).set_duration(5).set_position(('center', 'bottom'))
+    # 3. CTA
+    cta = TextClip("Subscribe for more!", fontsize=70, color='white', font='Arial-Bold', 
+                   stroke_color='black', stroke_width=3).set_duration(5).set_start(voice_audio.duration - 5).set_position(('center', 'bottom'))
     
-    # 5. Combine
+    # Final render
     final = CompositeVideoClip([bg_video] + text_clips + [cta])
-    final = final.set_duration(voice_audio.duration)
-    
     final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
     final.close()
 
