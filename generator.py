@@ -32,10 +32,19 @@ def generate_script():
     print("🧠 Asking Gemini to write the script...")
     client = genai.Client()
     prompt = """
-    Write a 45-second YouTube Short script about a fascinating space phenomenon.
-    Format your response as a JSON object with two keys:
-    - "script": The spoken text of the video.
-    - "image_prompts": A list of 5 short visual descriptions (max 5 words each) matching the script.
+    Write a 45-second YouTube Short script about a space phenomenon.
+    Format as valid JSON with the following keys:
+    {
+      "script": "The full script text...",
+      "image_prompts": ["prompt 1", "prompt 2", ...],
+      "title": "A high-CTR title (max 60 chars) with keywords...",
+      "tags": ["tag1", "tag2", "tag3", ...],
+      "description": "A 2-line optimized description..."
+    }
+    Rules:
+    1. Script: Use a hook, punchy sentences, and a perfect-loop ending.
+    2. Title: Curiosity-driven (e.g., 'Terrifying', 'Secret', 'Impossible').
+    3. Tags: Include at least 5 high-traffic space/science keywords.
     """
     max_retries = 3
     for attempt in range(max_retries):
@@ -141,24 +150,34 @@ def assemble_video():
     final.close()
 
 # --- 6. THE DELIVERY ---
-def upload_to_youtube(video_file, title, description):
+def upload_to_youtube(video_file, data):
     time.sleep(random.uniform(0, 900))
     with open("token.pickle", "rb") as token: credentials = pickle.load(token)
     youtube = build("youtube", "v3", credentials=credentials)
     
     media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
-    body = {"snippet": {"categoryId": "22", "title": title, "description": description, "tags": ["shorts", "space"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+    body = {
+        "snippet": {
+            "categoryId": "28", # Science & Technology
+            "title": data["title"], 
+            "description": data["description"], 
+            "tags": data["tags"]
+        }, 
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
+    }
     
     response = youtube.videos().insert(part="snippet,status", body=body, media_body=media).execute()
-    with open("report.txt", "a") as f: f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Uploaded: {title}\n")
+    with open("report.txt", "a") as f: 
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Uploaded: {data['title']}\n")
     print(f"✅ Success! Link: https://youtu.be/{response['id']}")
 
 async def main():
-    content = generate_script()
+    content = generate_script() 
     await generate_audio(content["script"])
     download_videos(content["image_prompts"])
     assemble_video()
-    upload_to_youtube("final_short.mp4", "Mind-Blowing Space Facts 🌌 #shorts", "Subscribe for daily space facts!")
-
+    # Pass the 'content' dictionary to the uploader
+    upload_to_youtube("final_short.mp4", content)
+    
 if __name__ == "__main__":
     asyncio.run(main())
