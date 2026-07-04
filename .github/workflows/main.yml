@@ -31,7 +31,7 @@ jobs:
       - name: Install Python requirements
         run: |
           python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy==1.0.3 pillow==9.5.0 edge-tts google-genai requests
+          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy==1.0.3 pillow==9.5.0 edge-tts google-generativeai requests
 
       - name: Create secrets
         run: |
