@@ -1,22 +1,19 @@
 import os
 import json
-import asyncio
-import requests
-import math
-import re
-import pickle
-import random
 import time
-import edge_tts
-from google import genai
-from google.genai import types
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, TextClip, CompositeVideoClip, CompositeAudioClip
-import moviepy.audio.fx.all as afx
+import random
+import re
+import requests
+import asyncio
+import pickle
 from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
+import google.generativeai as genai
+from google.generativeai import types
+import edge_tts
+from moviepy.editor import *
 import moviepy.video.fx.all as vfx
+import moviepy.audio.fx.all as afx
 
 # --- 1. SETUP & SECRETS ---
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
