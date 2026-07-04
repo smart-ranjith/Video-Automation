@@ -33,6 +33,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy==1.0.3 pillow==9.5.0 edge-tts google-genai requests
 
+      - name: Create secrets
+        run: |
+          echo "${{ secrets.CLIENT_SECRETS_BASE64 }}" | base64 --decode > client_secrets.json
+          echo "${{ secrets.TOKEN_PICKLE_BASE64 }}" | base64 --decode > token.pickle
+
       - name: Run Automation Script
         env:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
