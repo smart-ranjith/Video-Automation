@@ -14,8 +14,8 @@ import edge_tts
 from moviepy.editor import *
 import moviepy.video.fx.all as vfx
 import moviepy.audio.fx.all as afx
-from google import genai  # <--- THIS IS THE CORRECT IMPORT FOR THE NEW LIBRARY
-from google.genai import types
+# from google import genai  # <--- THIS IS THE CORRECT IMPORT FOR THE NEW LIBRARY
+# from google.genai import types
 
 # --- 1. SETUP & SECRETS ---
 os.environ["GEMINI_API_KEY"] = os.environ.get("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")
