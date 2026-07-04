@@ -1,8 +1,7 @@
-google-genai
-edge-tts
-requests
-moviepy
-google-auth
+google-generativeai
+google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
-google-api-python-client
+edge-tts
+moviepy
+requests
