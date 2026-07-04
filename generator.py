@@ -26,7 +26,7 @@ OUTPUT_AUDIO = "voiceover.mp3"
 # --- 2. THE BRAIN (GEMINI) ---
 def generate_script():
     print("🧠 Asking Gemini to write the script...")
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     prompt = """
     Write a 45-second YouTube Short script about a space phenomenon.
     Format as valid JSON with: {"script": "...", "image_prompts": [...], "title": "...", "tags": [...], "description": "..."}
