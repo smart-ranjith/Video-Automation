@@ -21,7 +21,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick
-          # Overwrite the policy file entirely to allow all read/write operations
+          # Overwrite the policy file to allow text rendering for moviepy
           echo '<policymap>
             <policy domain="coder" rights="read|write" pattern="LABEL" />
             <policy domain="coder" rights="read|write" pattern="PDF" />
