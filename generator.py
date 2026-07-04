@@ -8,8 +8,8 @@ import asyncio
 import pickle
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-# import google.generativeai as genai
-# from google.generativeai import types
+import google.generativeai as genai
+from google.generativeai import types
 import edge_tts
 from moviepy.editor import *
 import moviepy.video.fx.all as vfx
