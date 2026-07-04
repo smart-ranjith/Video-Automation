@@ -26,13 +26,21 @@ OUTPUT_AUDIO = "voiceover.mp3"
 # --- 2. THE BRAIN (GEMINI) ---
 def generate_script():
     print("🧠 Asking Gemini to write the script...")
-    model = genai.GenerativeModel('gemini-2.0-flash')
-    prompt = """
-    Write a 45-second YouTube Short script about a space phenomenon.
-    Format as valid JSON with: {"script": "...", "image_prompts": [...], "title": "...", "tags": [...], "description": "..."}
-    """
-    response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-    return json.loads(response.text)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            prompt = "Write a 45-second YouTube Short script about a space phenomenon..."
+            response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            return json.loads(response.text)
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print(f"⚠️ Quota hit, waiting 60 seconds (Attempt {attempt+1}/{max_retries})...")
+                time.sleep(60)
+            else:
+                raise e
+    raise Exception("Failed to get response from Gemini after retries.")
 
 # --- 3. THE VOICE & SUBTITLES ---
 async def generate_audio(text):
