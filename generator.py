@@ -28,19 +28,27 @@ def generate_script():
     print("🧠 Asking Gemini to write the script...")
     model = genai.GenerativeModel('gemini-1.5-flash')
     
+    prompt = """
+    Write a 45-second YouTube Short script about a space phenomenon.
+    Format as valid JSON with: {"script": "...", "image_prompts": [...], "title": "...", "tags": [...], "description": "..."}
+    """
+    
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            prompt = "Write a 45-second YouTube Short script about a space phenomenon..."
             response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
             return json.loads(response.text)
         except Exception as e:
+            # Check if it's a Rate Limit / Quota error
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print(f"⚠️ Quota hit, waiting 60 seconds (Attempt {attempt+1}/{max_retries})...")
-                time.sleep(60)
+                wait_time = (attempt + 1) * 60
+                print(f"⚠️ Quota hit, waiting {wait_time}s (Attempt {attempt+1}/{max_retries})...")
+                time.sleep(wait_time)
             else:
+                # If it's a different error (e.g., API Key invalid), crash immediately
                 raise e
-    raise Exception("Failed to get response from Gemini after retries.")
+                
+    raise Exception("Failed to get response from Gemini after multiple retries.")
 
 # --- 3. THE VOICE & SUBTITLES ---
 async def generate_audio(text):
