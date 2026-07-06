@@ -26,7 +26,8 @@ OUTPUT_AUDIO = "voiceover.mp3"
 # --- 2. THE BRAIN (GEMINI) ---
 def generate_script():
     print("🧠 Asking Gemini to write the script...")
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # Using 'gemini-1.5-flash-latest' avoids regional or endpoint resolution bugs in the legacy SDK
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
     
     prompt = """
     Write a 45-second YouTube Short script about a space phenomenon.
@@ -39,13 +40,16 @@ def generate_script():
             response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
             return json.loads(response.text)
         except Exception as e:
-            # Check if it's a Rate Limit / Quota error
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 wait_time = (attempt + 1) * 60
                 print(f"⚠️ Quota hit, waiting {wait_time}s (Attempt {attempt+1}/{max_retries})...")
                 time.sleep(wait_time)
+            elif "404" in str(e) or "not found" in str(e).lower():
+                # Automatic fallback if the endpoint is acting up
+                print("🔄 Model alias not found. Retrying with explicit model path...")
+                model = genai.GenerativeModel('models/gemini-1.5-flash')
+                time.sleep(2)
             else:
-                # If it's a different error (e.g., API Key invalid), crash immediately
                 raise e
                 
     raise Exception("Failed to get response from Gemini after multiple retries.")
