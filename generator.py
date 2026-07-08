@@ -87,13 +87,25 @@ def download_music():
     return None
 
 def parse_srt(filename):
+    if not os.path.exists(filename): return []
     with open(filename, "r", encoding="utf-8") as f: content = f.read()
-    pattern = re.compile(r"(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.*)")
+    
+    # More robust regex to handle varying Linux/Windows line endings and empty spaces
+    pattern = re.compile(r"(\d+)\s+(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})\s+(.*?)(?=\n\s*\n|\Z)", re.DOTALL)
     subtitles = []
+    
     for match in pattern.findall(content):
-        start = sum(x * int(t) for x, t in zip([3600, 60, 1], match[1].split(':')[:2] + [match[1].split(':')[2].split(',')[0]])) + int(match[1].split(',')[1])/1000.0
-        end = sum(x * int(t) for x, t in zip([3600, 60, 1], match[2].split(':')[:2] + [match[2].split(':')[2].split(',')[0]])) + int(match[2].split(',')[1])/1000.0
-        subtitles.append((start, end, match[3].strip()))
+        def to_sec(t_str):
+            h, m, s_ms = t_str.split(':')
+            s, ms = s_ms.split(',')
+            return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000.0
+        
+        start = to_sec(match[1])
+        end = to_sec(match[2])
+        text = match[3].strip().replace('\n', ' ')
+        if text:
+            subtitles.append((start, end, text))
+            
     return subtitles
 
 # --- 5. THE EDITOR ---
@@ -102,17 +114,49 @@ def assemble_video():
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     bgm_file = download_music()
     bgm = AudioFileClip(bgm_file).fx(afx.audio_loop, duration=voice_audio.duration).fx(afx.volumex, 0.1) if bgm_file else None
+    
     subtitles = parse_srt("subtitles.srt")
     video_files = [os.path.join("videos", f) for f in os.listdir("videos") if f.endswith(".mp4")]
-    if not video_files: raise Exception("No videos found!")
+    
+    if not video_files: 
+        raise Exception("CRITICAL: No videos found in /videos directory!")
     
     clips = []
-    for i, (start, end, text) in enumerate(subtitles):
-        clip = VideoFileClip(video_files[i % len(video_files)]).resize(height=1920, width=1080)
-        clip = clip.subclip(0, min(end - start, clip.duration)).fx(vfx.colorx, 1.1).fadein(0.2).fadeout(0.2)
-        clips.append(clip.set_start(start).set_duration(end - start))
+    text_clips = []
     
-    final = CompositeVideoClip(clips).set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
+    # SCENARIO A: Subtitles exist. Cut videos to sync with text.
+    if subtitles:
+        for i, (start, end, text) in enumerate(subtitles):
+            clip = VideoFileClip(video_files[i % len(video_files)]).resize(height=1920, width=1080)
+            clip = clip.subclip(0, min(end - start, clip.duration)).fx(vfx.colorx, 1.1).fadein(0.2).fadeout(0.2)
+            clips.append(clip.set_start(start).set_duration(end - start))
+            
+            txt = TextClip(text, fontsize=80, color='yellow', font='Arial-Bold', 
+                           stroke_color='black', stroke_width=4, method='caption', size=(900, None))
+            txt = txt.set_start(start).set_duration(end - start).set_position(('center', 'center'))
+            text_clips.append(txt)
+            
+    # SCENARIO B (FAILSAFE): Subtitles are empty. Cut videos evenly to match audio.
+    else:
+        print("⚠️ Warning: Subtitles missing or unreadable. Using fallback video sequencing.")
+        clip_duration = voice_audio.duration / len(video_files)
+        for i, v_path in enumerate(video_files):
+            start = i * clip_duration
+            end = min((i + 1) * clip_duration, voice_audio.duration)
+            if start >= voice_audio.duration: break
+            
+            clip = VideoFileClip(v_path).resize(height=1920, width=1080)
+            clip = clip.subclip(0, min(end - start, clip.duration)).fx(vfx.colorx, 1.1).fadein(0.2).fadeout(0.2)
+            clips.append(clip.set_start(start).set_duration(end - start))
+
+    if not clips: 
+        raise Exception("CRITICAL: Video clips list is completely empty.")
+
+    # Assemble final composition
+    bg_video = CompositeVideoClip(clips).set_audio(CompositeAudioClip([voice_audio, bgm]) if bgm else voice_audio)
+    
+    final_elements = [bg_video] + text_clips if text_clips else [bg_video]
+    final = CompositeVideoClip(final_elements)
     final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac")
     final.close()
 
