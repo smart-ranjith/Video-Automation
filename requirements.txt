@@ -1,7 +1,8 @@
 google-generativeai
-google-api-python-client
 google-auth-oauthlib
-google-auth-httplib2
+google-api-python-client
 edge-tts
-moviepy
+moviepy==1.0.3
+pillow
 requests
+imageio-ffmpeg==0.4.9
