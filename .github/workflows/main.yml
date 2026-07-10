@@ -1,47 +1,34 @@
-name: YouTube Automation Factory
+name: Generate and Upload YouTube Short
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours
-  workflow_dispatch:      # Allows manual trigger
+    - cron: "0 14 * * *"   # 14:00 UTC = 7:30 PM IST daily. Change as needed.
+  workflow_dispatch: {}     # lets you trigger manually from GH Actions tab
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.11"
 
-      - name: Install and Configure ImageMagick
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y imagemagick
-          # Overwrite the policy file to allow text rendering for moviepy
-          echo '<policymap>
-            <policy domain="coder" rights="read|write" pattern="LABEL" />
-            <policy domain="coder" rights="read|write" pattern="PDF" />
-            <policy domain="path" rights="read|write" pattern="@*" />
-          </policymap>' | sudo tee /etc/ImageMagick-6/policy.xml
+      - name: Install ffmpeg (required by moviepy)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: Install Python requirements
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-oauthlib google-auth-httplib2 moviepy==1.0.3 pillow==9.5.0 edge-tts google-generativeai requests
+      - name: Install Python deps
+        run: pip install -r requirements.txt
 
-      - name: Create secrets
-        run: |
-          echo "${{ secrets.CLIENT_SECRETS_BASE64 }}" | base64 --decode > client_secrets.json
-          echo "${{ secrets.TOKEN_PICKLE_BASE64 }}" | base64 --decode > token.pickle
-
-      - name: Run Automation Script
+      - name: Run generator
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          python generator.py
+          CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
+          TOKEN_PICKLE_BASE64: ${{ secrets.TOKEN_PICKLE_BASE64 }}
+        run: python generator.py
