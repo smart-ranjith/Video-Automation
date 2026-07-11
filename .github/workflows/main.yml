@@ -5,6 +5,9 @@ on:
     - cron: "0 14 * * *"   # 14:00 UTC = 7:30 PM IST daily. Change as needed.
   workflow_dispatch: {}     # lets you trigger manually from GH Actions tab
 
+permissions:
+  contents: write   # needed so the workflow can commit topic_history.json back
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -32,3 +35,12 @@ jobs:
           CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TOKEN_PICKLE_BASE64: ${{ secrets.TOKEN_PICKLE_BASE64 }}
         run: python generator.py
+
+      - name: Commit updated topic history
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add topic_history.json
+          git diff --staged --quiet || git commit -m "Update topic history [skip ci]"
+          git push || echo "Nothing to push"
