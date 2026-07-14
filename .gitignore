@@ -1,1 +1,12 @@
 .env
+client_secrets.json
+token.pickle
+media/
+videos/
+final_short.mp4
+voiceover.mp3
+thumbnail.jpg
+words.json
+subtitles.srt
+__pycache__/
+*.pyc
