@@ -734,7 +734,11 @@ def repost_via_zernio(video_file, data):
         platform_entries = []
         for acc in accounts:
             if acc.get("platform") in ("instagram", "facebook"):
-                platform_entries.append({"platform": acc["platform"], "accountId": acc.get("id") or acc.get("accountId")})
+                acc_id = acc.get("_id") or acc.get("id") or acc.get("accountId")
+                if acc_id:
+                    platform_entries.append({"platform": acc["platform"], "accountId": acc_id})
+                else:
+                    print(f"⚠️ Zernio account for {acc.get('platform')} has no resolvable ID - skipping it: {acc}")
         if not platform_entries:
             print("⚠️ No connected Instagram/Facebook accounts found on this Zernio key - connect them in the Zernio dashboard first.")
             return False
