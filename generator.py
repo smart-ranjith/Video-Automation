@@ -763,26 +763,46 @@ def repost_via_zernio(video_file, data):
             body = r.json()
         except ValueError:
             body = {}
-        print(f"ℹ️ Zernio response (status {r.status_code}): {r.text[:800]}")
+        print(f"ℹ️ Zernio response (status {r.status_code}): {r.text[:1500]}")
 
         looks_like_error = "error" in body
-        looks_like_success = r.status_code in (200, 201, 202) and not looks_like_error and ("_id" in body or "post" in body)
+        # 207 = Multi-Status - the batch request was processed but individual
+        # platforms may have succeeded or failed independently, need to check each.
+        looks_like_success = r.status_code in (200, 201, 202, 207) and not looks_like_error and ("_id" in body or "post" in body)
         if not looks_like_success:
             print(f"⚠️ Zernio post failed: {r.text[:300]}")
             return False
 
-        # Check per-platform publish status if the response includes it - this is
-        # the real confirmation, not just "the API accepted the request."
+        # Parse per-platform results - this is the real confirmation, not just
+        # "the API accepted the request." Especially important on a 207, which
+        # by definition means results differ per platform.
         post_obj = body.get("post", body)
-        platform_statuses = post_obj.get("platforms") or post_obj.get("platformResults") or []
-        if platform_statuses:
-            print(f"ℹ️ Per-platform status: {platform_statuses}")
-        else:
-            print("ℹ️ No per-platform status in response - check the Zernio dashboard (zernio.com/dashboard) "
-                  f"or your Instagram/Facebook directly to confirm it actually posted. Post ID: {post_obj.get('_id', 'unknown')}")
+        platform_entries_result = post_obj.get("platforms", [])
+        any_success = False
+        any_failure = False
+        for entry in platform_entries_result:
+            plat_name = entry.get("platform", "?")
+            acc = entry.get("accountId", {})
+            acc_name = acc.get("displayName") if isinstance(acc, dict) else acc
+            status = entry.get("status") or entry.get("publishStatus") or "unknown"
+            error_msg = entry.get("error") or entry.get("errorMessage")
+            if error_msg or status in ("failed", "error"):
+                any_failure = True
+                print(f"  ❌ {plat_name} ({acc_name}): FAILED - {error_msg or status}")
+            else:
+                any_success = True
+                print(f"  ✅ {plat_name} ({acc_name}): {status}")
 
-        print("✅ Zernio accepted the post request.")
-        return True
+        if any_success and not any_failure:
+            print("✅ Posted successfully to all platforms.")
+        elif any_success and any_failure:
+            print("⚠️ Partial success - some platforms posted, some failed (see per-platform lines above).")
+        elif any_failure:
+            print("❌ All platforms failed.")
+        else:
+            print(f"ℹ️ No per-platform status found in response - check zernio.com/dashboard to confirm. Post ID: {post_obj.get('_id', 'unknown')}")
+
+        return any_success
     except Exception as e:
         print(f"⚠️ Zernio repost error: {e}")
         return False
