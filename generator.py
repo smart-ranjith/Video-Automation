@@ -721,15 +721,37 @@ def repost_via_zernio(video_file, data):
         print("ℹ️ Zernio repost skipped - couldn't get a public URL for the video.")
         return False
 
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    # Zernio needs each connected account's ID, not just a platform name string -
+    # fetch the accounts list and match instagram/facebook to their accountId.
+    try:
+        acc_r = requests.get("https://zernio.com/api/v1/accounts", headers=headers, timeout=30)
+        if acc_r.status_code != 200:
+            print(f"⚠️ Zernio couldn't list connected accounts: {acc_r.text[:300]}")
+            return False
+        accounts = acc_r.json().get("accounts", acc_r.json() if isinstance(acc_r.json(), list) else [])
+        platform_entries = []
+        for acc in accounts:
+            if acc.get("platform") in ("instagram", "facebook"):
+                platform_entries.append({"platform": acc["platform"], "accountId": acc.get("id") or acc.get("accountId")})
+        if not platform_entries:
+            print("⚠️ No connected Instagram/Facebook accounts found on this Zernio key - connect them in the Zernio dashboard first.")
+            return False
+    except Exception as e:
+        print(f"⚠️ Zernio account lookup error: {e}")
+        return False
+
     try:
         caption = f"{data.get('title', '')}\n\n{data.get('description', '')}"
         r = requests.post(
             "https://zernio.com/api/v1/posts",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers=headers,
             json={
-                "platforms": ["instagram", "facebook"],
                 "content": caption[:2200],
-                "mediaUrls": [video_public_url],
+                "mediaItems": [{"type": "video", "url": video_public_url}],
+                "platforms": platform_entries,
+                "publishNow": True,
             },
             timeout=120,
         )
