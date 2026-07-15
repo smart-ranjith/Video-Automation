@@ -759,10 +759,29 @@ def repost_via_zernio(video_file, data):
             },
             timeout=120,
         )
-        if r.status_code not in (200, 201):
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        print(f"ℹ️ Zernio response (status {r.status_code}): {r.text[:800]}")
+
+        looks_like_error = "error" in body
+        looks_like_success = r.status_code in (200, 201, 202) and not looks_like_error and ("_id" in body or "post" in body)
+        if not looks_like_success:
             print(f"⚠️ Zernio post failed: {r.text[:300]}")
             return False
-        print("✅ Reposted to Instagram + Facebook via Zernio.")
+
+        # Check per-platform publish status if the response includes it - this is
+        # the real confirmation, not just "the API accepted the request."
+        post_obj = body.get("post", body)
+        platform_statuses = post_obj.get("platforms") or post_obj.get("platformResults") or []
+        if platform_statuses:
+            print(f"ℹ️ Per-platform status: {platform_statuses}")
+        else:
+            print("ℹ️ No per-platform status in response - check the Zernio dashboard (zernio.com/dashboard) "
+                  f"or your Instagram/Facebook directly to confirm it actually posted. Post ID: {post_obj.get('_id', 'unknown')}")
+
+        print("✅ Zernio accepted the post request.")
         return True
     except Exception as e:
         print(f"⚠️ Zernio repost error: {e}")
