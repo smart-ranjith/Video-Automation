@@ -42,9 +42,9 @@ PIXABAY_API_KEY = require_env("PIXABAY_API_KEY")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/yt-analytics.readonly",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+SCOPES = ["[https://www.googleapis.com/auth/youtube.upload](https://www.googleapis.com/auth/youtube.upload)",
+          "[https://www.googleapis.com/auth/yt-analytics.readonly](https://www.googleapis.com/auth/yt-analytics.readonly)",
+          "[https://www.googleapis.com/auth/youtube.force-ssl](https://www.googleapis.com/auth/youtube.force-ssl)"]
 
 def restore_google_secrets():
     if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"):
@@ -245,12 +245,23 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
                 contents=prompt,
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
-            return json.loads(response.text)
+            
+            # Clean the response to prevent JSONDecodeError from markdown wrappers
+            raw_text = response.text.strip()
+            if raw_text.startswith("```"):
+                lines = raw_text.split('\n')
+                if lines[0].startswith("```"): lines.pop(0)
+                if lines[-1].startswith("```"): lines.pop(-1)
+                raw_text = "\n".join(lines).strip()
+                
+            return json.loads(raw_text)
         except Exception as e:
+            print(f"⚠️ Gemini Attempt {attempt + 1} failed: {e}")
             if "429" in str(e):
                 time.sleep((attempt + 1) * 60)
             else:
-                raise e
+                time.sleep(5)
+                
     raise Exception("Failed to get response from Gemini.")
 
 # --- 3. WORD-BY-WORD AUDIO SYNC ---
@@ -352,7 +363,6 @@ def download_music():
     return None
 
 def download_sfx():
-    """Automatically pulls free whoosh and pop sound effects using the Pixabay API."""
     print("🔊 Downloading Sound Effects...")
     try:
         w_url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=whoosh"
