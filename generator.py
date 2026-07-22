@@ -12,7 +12,6 @@ import asyncio
 import pickle
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-# Upgraded to the new genai SDK to avoid future deprecation crashes
 from google import genai
 from google.genai import types
 import edge_tts
@@ -41,15 +40,12 @@ GEMINI_API_KEY = require_env("GEMINI_API_KEY")
 PEXELS_API_KEY = require_env("PEXELS_API_KEY")
 PIXABAY_API_KEY = require_env("PIXABAY_API_KEY")
 
-# Initialize new Client from the updated google-genai SDK
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
           "https://www.googleapis.com/auth/yt-analytics.readonly"]
 
 def restore_google_secrets():
-    """Decode base64 secrets from env vars into files GH Actions run needs.
-    Skips gracefully if files already exist on disk (local development)."""
     if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"):
         print("✅ Found local client_secrets.json and token.pickle. Skipping cloud extraction.")
         return
@@ -121,7 +117,7 @@ def fetch_top_performing_titles(credentials, max_results=5):
         vids = youtube.videos().list(part="snippet", id=",".join(video_ids)).execute()
         return [item["snippet"]["title"] for item in vids.get("items", [])]
     except Exception as e:
-        print(f"⚠️ Analytics fetch skipped (no data yet or scope missing): {e}")
+        print(f"⚠️ Analytics fetch skipped: {e}")
         return []
 
 # --- 2. THE AI SCRIPT ENGINE ---
@@ -272,7 +268,6 @@ def download_videos(prompts, visual_theme=""):
                 got_media = safe_download(video_file["link"], f"media/clip_{index}.mp4", min_bytes=50_000)
 
         if not got_media:
-            print(f"⚠️ No usable video for '{prompt}'. Falling back to Image...")
             img_url = f"https://api.pexels.com/v1/search?query={prompt}&orientation=portrait&per_page=1"
             img_response = requests.get(img_url, headers=headers)
             if img_response.status_code == 200 and img_response.json().get("photos"):
@@ -281,7 +276,6 @@ def download_videos(prompts, visual_theme=""):
 
         if not got_media:
             fallback = random.choice(FALLBACK_KEYWORDS)
-            print(f"⚠️ Prompt '{prompt}' failed. Using fallback keyword '{fallback}'...")
             fb_url = f"https://api.pexels.com/v1/search?query={fallback}&orientation=portrait&per_page=1"
             fb_response = requests.get(fb_url, headers=headers)
             if fb_response.status_code == 200 and fb_response.json().get("photos"):
@@ -400,7 +394,6 @@ def is_high_impact(word):
     
     return False
 
-
 def get_theme_palette(theme, is_impact_word):
     """Returns (fill_color, depth, depth_color, font_size) based on visual layout."""
     theme = (theme or "").lower()
@@ -418,7 +411,6 @@ def get_theme_palette(theme, is_impact_word):
         return (0, 255, 150), 10, (0, 100, 50), 130   # Emerald Green
     else:
         return (255, 255, 0), 10, (120, 95, 0), 130   # Default Yellow
-
 
 def assemble_video(thumbnail_text="", visual_theme=""):
     print("\n🎬 Assembling cinematic video...")
@@ -485,13 +477,11 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         word_img = render_3d_word(clean_word, fontsize=size, fill=fill, depth=depth, depth_color=d_color)
         txt_active = ImageClip(word_img)
         
-        # Only scale-pop the high impact words to maintain visual pacing
         if impact:
             txt_active = txt_active.resize(lambda t, d=word_dur: scale_pop(t, d))
             
         txt_active = txt_active.set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         
-        # Next Word Peek (Wireframing the upcoming text)
         if i + 1 < len(words):
             next_clean_word = words[i+1]["text"].strip(".,!?\"'").upper()
             peek_img = render_3d_word(next_clean_word, fontsize=60, fill=(200, 200, 200), depth=0)
@@ -501,7 +491,6 @@ def assemble_video(thumbnail_text="", visual_theme=""):
 
         text_clips.append(txt_active)
 
-        # Only pop SFX on impact words to avoid audio fatigue
         if has_sfx and impact:
             pop = AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2)
             audio_tracks.append(pop)
@@ -541,8 +530,6 @@ def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
             contents=prompt
         )
         
-        # Currently, the google-genai image generation is handled via generate_images or standard flash model 
-        # For safety/fallback, if the model cannot generate raw bytes, we fallback to our reliable frame grab
         print("⚠️ Note: Using standard thumbnail stamp instead of AI due to image generation pipeline requirements.")
         return False
         
