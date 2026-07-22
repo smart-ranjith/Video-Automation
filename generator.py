@@ -417,9 +417,7 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         if media_path.endswith(".mp4"):
             raw_clip = VideoFileClip(media_path)
             clip_duration = min(cut_duration, raw_clip.duration, voice_audio.duration - current_time)
-            sub = raw_clip.subclip(0, clip_duration)
-            raw_clip.close()  # Memory optimization fix
-            raw_clip = sub
+            raw_clip = raw_clip.subclip(0, clip_duration)
         else:
             clip_duration = min(cut_duration, voice_audio.duration - current_time)
             raw_clip = ImageClip(media_path).set_duration(clip_duration)
