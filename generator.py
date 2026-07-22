@@ -387,6 +387,39 @@ def scale_pop(t, dur):
         return 1.3 - (0.3 * t / 0.08)
     return 1.0
 
+def is_high_impact(word):
+    """Algorithmic evaluation of word weight for information hierarchy."""
+    word = word.strip(".,!?\"'")
+    
+    # Numbers, all caps, or specific power words draw the eye
+    if any(char.isdigit() for char in word): return True
+    if word.isupper() and len(word) > 1: return True
+    
+    power_words = ["MILLION", "BILLION", "DEADLY", "SECRET", "NEVER", "SHOCKING", "DISCOVERED", "MYSTERY", "ONLY", "FIRST", "LAST"]
+    if word.upper() in power_words: return True
+    
+    return False
+
+
+def get_theme_palette(theme, is_impact_word):
+    """Returns (fill_color, depth, depth_color, font_size) based on visual layout."""
+    theme = (theme or "").lower()
+    
+    # Baseline for normal words (Clean UI, flat white, smaller font)
+    if not is_impact_word:
+        return (255, 255, 255), 0, (0, 0, 0), 90
+        
+    # High-impact hierarchy (3D Extruded Pop)
+    if "space" in theme or "nebula" in theme or "cosmic" in theme:
+        return (0, 255, 255), 10, (0, 100, 100), 130  # Cyan
+    elif "volcan" in theme or "fire" in theme or "mars" in theme:
+        return (255, 80, 0), 10, (120, 30, 0), 130    # Neon Orange
+    elif "ocean" in theme or "abyss" in theme or "ice" in theme:
+        return (0, 255, 150), 10, (0, 100, 50), 130   # Emerald Green
+    else:
+        return (255, 255, 0), 10, (120, 95, 0), 130   # Default Yellow
+
+
 def assemble_video(thumbnail_text="", visual_theme=""):
     print("\n🎬 Assembling cinematic video...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
@@ -446,22 +479,30 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         word_dur = max(end_t - start_t, 0.01)
         
         clean_word = word_data["text"].strip(".,!?\"'").upper()
+        impact = is_high_impact(clean_word)
+        fill, depth, d_color, size = get_theme_palette(visual_theme, impact)
         
-        word_img = render_3d_word(clean_word, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0))
+        word_img = render_3d_word(clean_word, fontsize=size, fill=fill, depth=depth, depth_color=d_color)
         txt_active = ImageClip(word_img)
-        txt_active = txt_active.resize(lambda t, d=word_dur: scale_pop(t, d))
+        
+        # Only scale-pop the high impact words to maintain visual pacing
+        if impact:
+            txt_active = txt_active.resize(lambda t, d=word_dur: scale_pop(t, d))
+            
         txt_active = txt_active.set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         
+        # Next Word Peek (Wireframing the upcoming text)
         if i + 1 < len(words):
             next_clean_word = words[i+1]["text"].strip(".,!?\"'").upper()
-            peek_img = render_3d_word(next_clean_word, fontsize=70, fill=(255, 255, 255), depth=0)
+            peek_img = render_3d_word(next_clean_word, fontsize=60, fill=(200, 200, 200), depth=0)
             txt_next = ImageClip(peek_img)
             txt_next = txt_next.set_position(('center', 1300)).set_start(start_t).set_end(end_t)
             text_clips.append(txt_next)
 
         text_clips.append(txt_active)
 
-        if has_sfx:
+        # Only pop SFX on impact words to avoid audio fatigue
+        if has_sfx and impact:
             pop = AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2)
             audio_tracks.append(pop)
 
