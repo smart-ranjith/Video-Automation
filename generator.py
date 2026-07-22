@@ -43,7 +43,8 @@ PIXABAY_API_KEY = require_env("PIXABAY_API_KEY")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/yt-analytics.readonly"]
+          "https://www.googleapis.com/auth/yt-analytics.readonly",
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 def restore_google_secrets():
     if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"):
@@ -79,7 +80,7 @@ VOICE_POOL = ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural"]
 VOICE = random.choice(VOICE_POOL)
 OUTPUT_AUDIO = "voiceover.mp3"
 
-# --- TOPIC MEMORY ---
+# --- TOPIC MEMORY & COMMENT HARVESTING ---
 TOPIC_HISTORY_FILE = "topic_history.json"
 
 def load_topic_history():
@@ -121,20 +122,14 @@ def fetch_top_performing_titles(credentials, max_results=5):
         return []
 
 def scrape_viewer_ideas(credentials):
-    """Scrapes top-level comments from the channel's most recent video to fuel future scripts."""
     print("🔍 Scanning recent videos for viewer requests...")
     try:
         youtube = build("youtube", "v3", credentials=credentials)
         
-        # 1. Find the channel's uploads playlist ID
-        channel_request = youtube.channels().list(
-            part="contentDetails",
-            mine=True
-        )
+        channel_request = youtube.channels().list(part="contentDetails", mine=True)
         channel_response = channel_request.execute()
         uploads_playlist_id = channel_response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
         
-        # 2. Get the most recent video
         playlist_request = youtube.playlistItems().list(
             part="snippet",
             playlistId=uploads_playlist_id,
@@ -147,7 +142,6 @@ def scrape_viewer_ideas(credentials):
             
         latest_video_id = playlist_response["items"][0]["snippet"]["resourceId"]["videoId"]
         
-        # 3. Get the top comments from that video
         comment_request = youtube.commentThreads().list(
             part="snippet",
             videoId=latest_video_id,
@@ -159,7 +153,6 @@ def scrape_viewer_ideas(credentials):
         ideas = []
         for item in comment_response.get("items", []):
             comment = item["snippet"]["topLevelComment"]["snippet"]["textOriginal"]
-            # Filter out generic 1-word comments like "first" or "cool"
             if len(comment) > 10:
                 ideas.append(comment)
                 
@@ -170,11 +163,10 @@ def scrape_viewer_ideas(credentials):
                 
         return ideas
     except Exception as e:
-        print(f"⚠️ Failed to scrape comments (or no comments yet): {e}")
+        print(f"⚠️ Comment scraper skipped (or no comments yet): {e}")
         return []
 
 def load_viewer_requests():
-    """Loads scraped comments from disk if they exist."""
     if os.path.exists("viewer_requests.json"):
         with open("viewer_requests.json", "r") as f:
             return json.load(f)
@@ -208,7 +200,7 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
     Strict Structure Rules:
     1. THE HOOK: First 8 words must be a shocking claim, surprising number, or contradiction. NO "did you know" / "have you ever" openers. Second person "you" early.
     2. THE BODY: Deliver rapid-fire, mind-blowing facts. No dead air, no filler.
-    3. THE INTERACTIVE CTA (NEW): The second-to-last sentence MUST be a rapid, natural call to action asking the viewer what mystery or fact they want you to explore next (e.g., "Tell me what mystery to solve next in the comments, but..."). 
+    3. THE INTERACTIVE CTA: The second-to-last sentence MUST be a rapid, natural call to action asking the viewer what mystery or fact they want you to explore next (e.g., "Tell me what mystery to solve next in the comments, but..."). 
     4. THE LOOP: The final sentence must be an incomplete thought that grammatically loops seamlessly right back into the first word of the hook.
 
     Psychological Engagement Rules (this is what turns viewers into subscribers, apply ALL of them):
@@ -359,6 +351,22 @@ def download_music():
             return "background_music.mp3"
     return None
 
+def download_sfx():
+    """Automatically pulls free whoosh and pop sound effects using the Pixabay API."""
+    print("🔊 Downloading Sound Effects...")
+    try:
+        w_url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=whoosh"
+        r_w = requests.get(w_url, timeout=15)
+        if r_w.status_code == 200 and r_w.json().get("hits"):
+            safe_download(r_w.json()["hits"][0]["audio"], "whoosh.mp3", min_bytes=1000)
+            
+        p_url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=pop+bubble"
+        r_p = requests.get(p_url, timeout=15)
+        if r_p.status_code == 200 and r_p.json().get("hits"):
+            safe_download(r_p.json()["hits"][0]["audio"], "pop.mp3", min_bytes=500)
+    except Exception as e:
+        print(f"⚠️ SFX download skipped: {e}")
+
 # --- 5. THE PRO EDITOR ---
 def make_vignette_clip(duration, w=1080, h=1920):
     yy, xx = np.mgrid[0:h, 0:w]
@@ -450,35 +458,27 @@ def scale_pop(t, dur):
     return 1.0
 
 def is_high_impact(word):
-    """Algorithmic evaluation of word weight for information hierarchy."""
     word = word.strip(".,!?\"'")
-    
-    # Numbers, all caps, or specific power words draw the eye
     if any(char.isdigit() for char in word): return True
     if word.isupper() and len(word) > 1: return True
     
     power_words = ["MILLION", "BILLION", "DEADLY", "SECRET", "NEVER", "SHOCKING", "DISCOVERED", "MYSTERY", "ONLY", "FIRST", "LAST"]
     if word.upper() in power_words: return True
-    
     return False
 
 def get_theme_palette(theme, is_impact_word):
-    """Returns (fill_color, depth, depth_color, font_size) based on visual layout."""
     theme = (theme or "").lower()
-    
-    # Baseline for normal words (Clean UI, flat white, smaller font)
     if not is_impact_word:
         return (255, 255, 255), 0, (0, 0, 0), 90
         
-    # High-impact hierarchy (3D Extruded Pop)
     if "space" in theme or "nebula" in theme or "cosmic" in theme:
-        return (0, 255, 255), 10, (0, 100, 100), 130  # Cyan
+        return (0, 255, 255), 10, (0, 100, 100), 130  
     elif "volcan" in theme or "fire" in theme or "mars" in theme:
-        return (255, 80, 0), 10, (120, 30, 0), 130    # Neon Orange
+        return (255, 80, 0), 10, (120, 30, 0), 130    
     elif "ocean" in theme or "abyss" in theme or "ice" in theme:
-        return (0, 255, 150), 10, (0, 100, 50), 130   # Emerald Green
+        return (0, 255, 150), 10, (0, 100, 50), 130   
     else:
-        return (255, 255, 0), 10, (120, 95, 0), 130   # Default Yellow
+        return (255, 255, 0), 10, (120, 95, 0), 130   
 
 def assemble_video(thumbnail_text="", visual_theme=""):
     print("\n🎬 Assembling cinematic video...")
@@ -583,13 +583,11 @@ def assemble_video(thumbnail_text="", visual_theme=""):
     final.close()
 
 def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
-    from PIL import Image
     try:
         prompt = (
             f"A dramatic, high-contrast YouTube thumbnail image for a Shorts video about: {title}. "
             f"Visual theme: {visual_theme or 'space and science mystery'}. "
             "Bold, vivid, saturated colors, strong single focal subject, cinematic lighting, "
-            "eye-catching and click-worthy composition, no text or letters in the image, "
             "portrait orientation."
         )
         
@@ -597,12 +595,9 @@ def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
             model='gemini-2.5-flash',
             contents=prompt
         )
-        
-        print("⚠️ Note: Using standard thumbnail stamp instead of AI due to image generation pipeline requirements.")
         return False
-        
     except Exception as e:
-        print(f"⚠️ AI thumbnail generation failed ({e}) - using frame-stamp fallback instead.")
+        print(f"⚠️ AI thumbnail generation skipped: {e}")
         return False
 
 def generate_thumbnail(final_clip, thumbnail_text, out_path="thumbnail.jpg"):
@@ -628,11 +623,11 @@ def generate_thumbnail(final_clip, thumbnail_text, out_path="thumbnail.jpg"):
     draw.text((x, y), text, font=font, fill="yellow")
     img.save(out_path, quality=92)
 
-# --- 6. THE DELIVERY ---
+# --- 6. THE DELIVERY & ENGAGEMENT ENGINE ---
 def upload_to_youtube(video_file, data, credentials):
     youtube = build("youtube", "v3", credentials=credentials)
     media = MediaFileUpload(video_file, chunksize=-1, resumable=True)
-    hashtags = " ".join(f"#{tag.replace(' ', '')}" for tag in data.get("tags", [])[:5])
+    hashtags = " ".join(f"#{tag.replace(' ', '').replace('#', '')}" for tag in data.get("tags", [])[:8])
     description = f"{data['description']}\n\n{hashtags}".strip()
 
     body = {"snippet": {"categoryId": "28", "title": data["title"], "description": description, "tags": data["tags"]}, 
@@ -650,6 +645,46 @@ def upload_to_youtube(video_file, data, credentials):
             print(f"⚠️ Thumbnail upload failed (needs phone-verified channel): {e}")
 
     return video_id
+
+def post_auto_comment(video_id, script_text, credentials):
+    print("💬 Generating and posting auto-comment...")
+    youtube = build("youtube", "v3", credentials=credentials)
+
+    prompt = f"""
+    Read this short YouTube video script and write ONE short, highly engaging question to pin in the comments.
+    The goal is to provoke viewers into debating or answering in the replies.
+    Keep it under 15 words. Do not use quotes or hashtags.
+    Script: {script_text}
+    """
+    
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
+        comment_text = response.text.strip().strip('"')
+    except Exception as e:
+        print(f"⚠️ Failed to generate comment text: {e}")
+        return
+
+    try:
+        request = youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {
+                            "textOriginal": comment_text
+                        }
+                    }
+                }
+            }
+        )
+        request.execute()
+        print(f"✅ Auto-comment posted successfully: '{comment_text}'")
+    except Exception as e:
+        print(f"⚠️ YouTube comment API failed: {e}")
 
 def upload_to_github_release(video_file):
     token = os.environ.get("GITHUB_TOKEN")
@@ -755,7 +790,7 @@ async def main():
     restore_google_secrets()
     credentials = get_google_credentials()
 
-    # 1. Harvest yesterday's comments
+    # 1. Harvest yesterday's comments & load history
     scrape_viewer_ideas(credentials)
     viewer_requests = load_viewer_requests()
 
@@ -763,14 +798,19 @@ async def main():
     avoid_topics = [h["title"] for h in history]
     boost_topics = fetch_top_performing_titles(credentials)
 
-    # 2. Pass everything into the AI
+    # 2. AI Script Generation
     content = generate_script(avoid_topics=avoid_topics, boost_topics=boost_topics, viewer_requests=viewer_requests)
     await generate_audio_and_timestamps(content["script"])
         
+    # 3. Media Download & Assembly
     download_videos(content["image_prompts"], visual_theme=content.get("visual_theme", ""))
+    download_sfx()
     assemble_video(thumbnail_text=content.get("thumbnail_text", content.get("title", "")),
                    visual_theme=content.get("visual_theme", ""))
+    
+    # 4. Upload & Interactive Features
     video_id = upload_to_youtube("final_short.mp4", content, credentials)
+    post_auto_comment(video_id, content["script"], credentials)
 
     save_topic_history({"title": content["title"], "video_id": video_id, "date": time.strftime("%Y-%m-%d")})
     repost_via_zernio("final_short.mp4", content)
