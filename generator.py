@@ -120,8 +120,68 @@ def fetch_top_performing_titles(credentials, max_results=5):
         print(f"⚠️ Analytics fetch skipped: {e}")
         return []
 
+def scrape_viewer_ideas(credentials):
+    """Scrapes top-level comments from the channel's most recent video to fuel future scripts."""
+    print("🔍 Scanning recent videos for viewer requests...")
+    try:
+        youtube = build("youtube", "v3", credentials=credentials)
+        
+        # 1. Find the channel's uploads playlist ID
+        channel_request = youtube.channels().list(
+            part="contentDetails",
+            mine=True
+        )
+        channel_response = channel_request.execute()
+        uploads_playlist_id = channel_response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+        
+        # 2. Get the most recent video
+        playlist_request = youtube.playlistItems().list(
+            part="snippet",
+            playlistId=uploads_playlist_id,
+            maxResults=1
+        )
+        playlist_response = playlist_request.execute()
+        
+        if not playlist_response.get("items"):
+            return []
+            
+        latest_video_id = playlist_response["items"][0]["snippet"]["resourceId"]["videoId"]
+        
+        # 3. Get the top comments from that video
+        comment_request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=latest_video_id,
+            maxResults=5,
+            order="relevance"
+        )
+        comment_response = comment_request.execute()
+        
+        ideas = []
+        for item in comment_response.get("items", []):
+            comment = item["snippet"]["topLevelComment"]["snippet"]["textOriginal"]
+            # Filter out generic 1-word comments like "first" or "cool"
+            if len(comment) > 10:
+                ideas.append(comment)
+                
+        if ideas:
+            print(f"💡 Found {len(ideas)} viewer requests for future scripts!")
+            with open("viewer_requests.json", "w") as f:
+                json.dump(ideas, f)
+                
+        return ideas
+    except Exception as e:
+        print(f"⚠️ Failed to scrape comments (or no comments yet): {e}")
+        return []
+
+def load_viewer_requests():
+    """Loads scraped comments from disk if they exist."""
+    if os.path.exists("viewer_requests.json"):
+        with open("viewer_requests.json", "r") as f:
+            return json.load(f)
+    return []
+
 # --- 2. THE AI SCRIPT ENGINE ---
-def generate_script(avoid_topics=None, boost_topics=None):
+def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
     print("🧠 Asking Gemini to write the viral script...")
 
     avoid_block = ""
@@ -132,17 +192,24 @@ def generate_script(avoid_topics=None, boost_topics=None):
     boost_block = ""
     if boost_topics:
         boost_list = "; ".join(boost_topics)
-        boost_block = f"\n    These recent topics performed best with viewers - lean toward similar style/subject (but do not repeat them exactly): {boost_list}\n"
+        boost_block = f"\n    These recent topics performed best with viewers - lean toward similar style/subject: {boost_list}\n"
+
+    request_block = ""
+    if viewer_requests:
+        request_list = " | ".join(viewer_requests)
+        request_block = f"\n    CRITICAL: Base today's video topic directly on one of these viewer requests if possible: {request_list}\n"
 
     prompt = f"""
     You are an expert YouTube Shorts scriptwriter known for extreme viewer retention across ALL ages (kids to elderly). 
     Write a highly engaging, fast-paced 25-30 second script about a fascinating science, space, or nature mystery. 
     Ensure the script and all metadata are written entirely in English.
-    {avoid_block}{boost_block}
+    {avoid_block}{boost_block}{request_block}
+    
     Strict Structure Rules:
     1. THE HOOK: First 8 words must be a shocking claim, surprising number, or contradiction. NO "did you know" / "have you ever" openers. Second person "you" early.
     2. THE BODY: Deliver rapid-fire, mind-blowing facts. No dead air, no filler.
-    3. THE LOOP: The final sentence must be an incomplete thought that grammatically loops seamlessly right back into the first word of the hook.
+    3. THE INTERACTIVE CTA (NEW): The second-to-last sentence MUST be a rapid, natural call to action asking the viewer what mystery or fact they want you to explore next (e.g., "Tell me what mystery to solve next in the comments, but..."). 
+    4. THE LOOP: The final sentence must be an incomplete thought that grammatically loops seamlessly right back into the first word of the hook.
 
     Psychological Engagement Rules (this is what turns viewers into subscribers, apply ALL of them):
     - CURIOSITY GAP: Never fully answer the hook's question immediately. Open a question in the first sentence, delay the payoff to the middle of the script - the brain craves closure and keeps watching to get it.
@@ -150,7 +217,7 @@ def generate_script(avoid_topics=None, boost_topics=None):
     - ESCALATING STAKES: Each fact in the body should feel BIGGER or stranger than the last, building toward a peak right before the loop - a flat list of equally-weighted facts loses attention, an escalating one doesn't.
     - RELATABILITY ANCHOR: At least once, connect the cosmic/strange fact back to something the viewer can personally sense or imagine ("right now, above your head...") - this personalizes an abstract fact and increases retention.
     - AWE + FEAR BLEND: The best-performing science shorts blend genuine awe ("this is beautiful/incredible") with a small edge of unease or existential surprise ("...and it could happen again") - pure awe is pleasant but forgettable, awe+edge is memorable and shareable.
-    - IMPLICIT SUBSCRIBE TRIGGER: Structure the second-to-last fact as the biggest "wait, WHAT?" moment of the whole script - viewers who are hit with the strongest surprise right before a loop are most likely to rewatch and subscribe, so don't save your best fact for a soft ending, save it for right before the loop.
+    - IMPLICIT SUBSCRIBE TRIGGER: Structure the fact right before the CTA as the biggest "wait, WHAT?" moment of the whole script - viewers who are hit with the strongest surprise right before a loop are most likely to rewatch and subscribe.
 
     Language Rules (critical for all-age appeal):
     - Simple, universal vocabulary understandable by both children and adults.
@@ -158,13 +225,14 @@ def generate_script(avoid_topics=None, boost_topics=None):
     - Universal wonder/surprise emotion, not niche humor, slang, or cultural references.
 
     Technical Constraints:
-    - The "script" must be exactly 55 to 65 words (fits 25-30 seconds spoken).
+    - The "script" must be exactly 60 to 70 words (fits 25-30 seconds spoken).
     - First decide ONE consistent visual world for this whole video (e.g. "deep space nebula", "ocean abyss", "volcanic planet surface", "arctic ice cave") - put it in "visual_theme".
     - The "image_prompts" array must contain exactly 10 visual search terms for stock footage, each 4-6 words, cinematic and specific, and ALL 10 must visually belong to the SAME "visual_theme" world - same setting, same color palette, same lighting mood. Do NOT mix unrelated settings.
     - Mix shot types within that one theme: wide establishing, close-up detail, slow-motion/action - variety of shots, not variety of subjects.
     - Avoid abstract concepts - describe a visual proxy instead, staying inside the chosen visual_theme.
     - "thumbnail_text" = 3-4 word punchy bold overlay text for the first-frame thumbnail, separate from title.
-    - "description" should open with a curiosity-gap question, then a natural one-line subscribe nudge.
+    - "tags" MUST be exactly 5 to 8 hyper-targeted, high-traffic SEO hashtags (e.g., ["#SpaceFacts", "#Astrophysics", "#Cosmos"]). Do NOT exceed 8 tags.
+    - "description" should open with a curiosity-gap question, then a natural one-line subscribe nudge, followed by the tags.
 
     Format the output as strictly valid JSON exactly like this:
     {{
@@ -173,7 +241,7 @@ def generate_script(avoid_topics=None, boost_topics=None):
       "image_prompts": ["...", "...", "..."],
       "title": "Catchy SEO Title #shorts",
       "thumbnail_text": "...",
-      "tags": ["tag1", "tag2", "tag3"],
+      "tags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],
       "description": "SEO description."
     }}
     """
@@ -687,11 +755,16 @@ async def main():
     restore_google_secrets()
     credentials = get_google_credentials()
 
+    # 1. Harvest yesterday's comments
+    scrape_viewer_ideas(credentials)
+    viewer_requests = load_viewer_requests()
+
     history = load_topic_history()
     avoid_topics = [h["title"] for h in history]
     boost_topics = fetch_top_performing_titles(credentials)
 
-    content = generate_script(avoid_topics=avoid_topics, boost_topics=boost_topics)
+    # 2. Pass everything into the AI
+    content = generate_script(avoid_topics=avoid_topics, boost_topics=boost_topics, viewer_requests=viewer_requests)
     await generate_audio_and_timestamps(content["script"])
         
     download_videos(content["image_prompts"], visual_theme=content.get("visual_theme", ""))
