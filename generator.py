@@ -42,13 +42,19 @@ PIXABAY_API_KEY = require_env("PIXABAY_API_KEY")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/yt-analytics.readonly",
-          "https://www.googleapis.com/auth/youtube.force-ssl"]
+# 100% Chat-UI Proof URL Construction using Base64
+_AUTH = base64.b64decode("aHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC8=").decode("utf-8")
+SCOPES = [
+    _AUTH + "youtube.upload",
+    _AUTH + "yt-analytics.readonly",
+    _AUTH + "youtube.force-ssl"
+]
 
 def restore_google_secrets():
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+
     if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"):
-        print("✅ Found local client_secrets.json and token.pickle. Skipping cloud extraction.")
         return
 
     client_b64 = os.environ.get("CLIENT_SECRETS_BASE64")
@@ -317,6 +323,9 @@ def download_videos(prompts, visual_theme=""):
     headers = {"Authorization": PEXELS_API_KEY}
     if not os.path.exists("media"): os.makedirs("media")
 
+    vid_api = base64.b64decode("aHR0cHM6Ly9hcGkucGV4ZWxzLmNvbS92aWRlb3Mvc2VhcmNo").decode("utf-8")
+    img_api = base64.b64decode("aHR0cHM6Ly9hcGkucGV4ZWxzLmNvbS92MS9zZWFyY2g=").decode("utf-8")
+
     for index, prompt in enumerate(prompts):
         got_media = False
         queries_to_try = [f"{prompt} {visual_theme}".strip()] if visual_theme else []
@@ -324,8 +333,11 @@ def download_videos(prompts, visual_theme=""):
 
         videos = []
         for q in queries_to_try:
-            vid_url = f"[https://api.pexels.com/videos/search?query=](https://api.pexels.com/videos/search?query=){q}&orientation=portrait&per_page=5"
-            response = requests.get(vid_url, headers=headers)
+            response = requests.get(
+                vid_api,
+                headers=headers,
+                params={"query": q, "orientation": "portrait", "per_page": 5}
+            )
             if response.status_code == 200 and response.json().get("videos"):
                 videos = response.json()["videos"]
                 break
@@ -339,23 +351,32 @@ def download_videos(prompts, visual_theme=""):
                 got_media = safe_download(video_file["link"], f"media/clip_{index}.mp4", min_bytes=50_000)
 
         if not got_media:
-            img_url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){prompt}&orientation=portrait&per_page=1"
-            img_response = requests.get(img_url, headers=headers)
+            img_response = requests.get(
+                img_api,
+                headers=headers,
+                params={"query": prompt, "orientation": "portrait", "per_page": 1}
+            )
             if img_response.status_code == 200 and img_response.json().get("photos"):
                 photo_url = img_response.json()["photos"][0]["src"]["portrait"]
                 got_media = safe_download(photo_url, f"media/clip_{index}.jpg", min_bytes=5_000)
 
         if not got_media:
             fallback = random.choice(FALLBACK_KEYWORDS)
-            fb_url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){fallback}&orientation=portrait&per_page=1"
-            fb_response = requests.get(fb_url, headers=headers)
+            fb_response = requests.get(
+                img_api,
+                headers=headers,
+                params={"query": fallback, "orientation": "portrait", "per_page": 1}
+            )
             if fb_response.status_code == 200 and fb_response.json().get("photos"):
                 photo_url = fb_response.json()["photos"][0]["src"]["portrait"]
                 safe_download(photo_url, f"media/clip_{index}.jpg", min_bytes=5_000)
 
 def download_music():
-    url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=cinematic+ambient"
-    response = requests.get(url)
+    audio_api = base64.b64decode("aHR0cHM6Ly9waXhhYmF5LmNvbS9hcGkvYXVkaW8v").decode("utf-8")
+    response = requests.get(
+        audio_api,
+        params={"key": PIXABAY_API_KEY, "q": "cinematic ambient"}
+    )
     if response.status_code == 200 and response.json().get("hits"):
         track = random.choice(response.json()["hits"])
         if safe_download(track["audio"], "background_music.mp3", min_bytes=20_000):
@@ -364,14 +385,13 @@ def download_music():
 
 def download_sfx():
     print("🔊 Downloading Sound Effects...")
+    audio_api = base64.b64decode("aHR0cHM6Ly9waXhhYmF5LmNvbS9hcGkvYXVkaW8v").decode("utf-8")
     try:
-        w_url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=whoosh"
-        r_w = requests.get(w_url, timeout=15)
+        r_w = requests.get(audio_api, params={"key": PIXABAY_API_KEY, "q": "whoosh"}, timeout=15)
         if r_w.status_code == 200 and r_w.json().get("hits"):
             safe_download(r_w.json()["hits"][0]["audio"], "whoosh.mp3", min_bytes=1000)
             
-        p_url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=pop+bubble"
-        r_p = requests.get(p_url, timeout=15)
+        r_p = requests.get(audio_api, params={"key": PIXABAY_API_KEY, "q": "pop bubble"}, timeout=15)
         if r_p.status_code == 200 and r_p.json().get("hits"):
             safe_download(r_p.json()["hits"][0]["audio"], "pop.mp3", min_bytes=500)
     except Exception as e:
@@ -725,7 +745,7 @@ def upload_to_github_release(video_file):
     try:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
         tag = f"short-{int(time.time())}"
-        r = requests.post(f"[https://api.github.com/repos/](https://api.github.com/repos/){repo}/releases", headers=headers, json={
+        r = requests.post(base64.b64decode("aHR0cHM6Ly9hcGkuZ2l0aHViLmNvbS9yZXBvcy8=").decode("utf-8") + f"{repo}/releases", headers=headers, json={
             "tag_name": tag, "name": tag, "body": "Auto-generated video asset for cross-posting.", "draft": False, "prerelease": False,
         }, timeout=30)
         if r.status_code not in (200, 201):
@@ -756,8 +776,10 @@ def repost_via_zernio(video_file, data):
         return False
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    acc_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8")
+    post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
     try:
-        acc_r = requests.get("[https://zernio.com/api/v1/accounts](https://zernio.com/api/v1/accounts)", headers=headers, timeout=30)
+        acc_r = requests.get(acc_url, headers=headers, timeout=30)
         if acc_r.status_code != 200:
             return False
         accounts = acc_r.json().get("accounts", acc_r.json() if isinstance(acc_r.json(), list) else [])
@@ -775,7 +797,7 @@ def repost_via_zernio(video_file, data):
     try:
         caption = f"{data.get('title', '')}\n\n{data.get('description', '')}"
         r = requests.post(
-            "[https://zernio.com/api/v1/posts](https://zernio.com/api/v1/posts)",
+            post_url,
             headers=headers,
             json={
                 "content": caption[:2200],
