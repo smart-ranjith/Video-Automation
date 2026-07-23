@@ -42,9 +42,9 @@ PIXABAY_API_KEY = require_env("PIXABAY_API_KEY")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-SCOPES = ["[https://www.googleapis.com/auth/youtube.upload](https://www.googleapis.com/auth/youtube.upload)",
-          "[https://www.googleapis.com/auth/yt-analytics.readonly](https://www.googleapis.com/auth/yt-analytics.readonly)",
-          "[https://www.googleapis.com/auth/youtube.force-ssl](https://www.googleapis.com/auth/youtube.force-ssl)"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
+          "https://www.googleapis.com/auth/yt-analytics.readonly",
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 
 def restore_google_secrets():
     if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"):
@@ -246,7 +246,6 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
                 config=types.GenerateContentConfig(response_mime_type="application/json")
             )
             
-            # Clean the response to prevent JSONDecodeError from markdown wrappers
             raw_text = response.text.strip()
             if raw_text.startswith("```"):
                 lines = raw_text.split('\n')
@@ -258,7 +257,8 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
         except Exception as e:
             print(f"⚠️ Gemini Attempt {attempt + 1} failed: {e}")
             if "429" in str(e):
-                time.sleep((attempt + 1) * 60)
+                print("⏳ Gemini API rate limit hit. Pausing for 45 seconds to reset quota...")
+                time.sleep(45)
             else:
                 time.sleep(5)
                 
@@ -324,7 +324,7 @@ def download_videos(prompts, visual_theme=""):
 
         videos = []
         for q in queries_to_try:
-            vid_url = f"https://api.pexels.com/videos/search?query={q}&orientation=portrait&per_page=5"
+            vid_url = f"[https://api.pexels.com/videos/search?query=](https://api.pexels.com/videos/search?query=){q}&orientation=portrait&per_page=5"
             response = requests.get(vid_url, headers=headers)
             if response.status_code == 200 and response.json().get("videos"):
                 videos = response.json()["videos"]
@@ -339,7 +339,7 @@ def download_videos(prompts, visual_theme=""):
                 got_media = safe_download(video_file["link"], f"media/clip_{index}.mp4", min_bytes=50_000)
 
         if not got_media:
-            img_url = f"https://api.pexels.com/v1/search?query={prompt}&orientation=portrait&per_page=1"
+            img_url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){prompt}&orientation=portrait&per_page=1"
             img_response = requests.get(img_url, headers=headers)
             if img_response.status_code == 200 and img_response.json().get("photos"):
                 photo_url = img_response.json()["photos"][0]["src"]["portrait"]
@@ -347,14 +347,14 @@ def download_videos(prompts, visual_theme=""):
 
         if not got_media:
             fallback = random.choice(FALLBACK_KEYWORDS)
-            fb_url = f"https://api.pexels.com/v1/search?query={fallback}&orientation=portrait&per_page=1"
+            fb_url = f"[https://api.pexels.com/v1/search?query=](https://api.pexels.com/v1/search?query=){fallback}&orientation=portrait&per_page=1"
             fb_response = requests.get(fb_url, headers=headers)
             if fb_response.status_code == 200 and fb_response.json().get("photos"):
                 photo_url = fb_response.json()["photos"][0]["src"]["portrait"]
                 safe_download(photo_url, f"media/clip_{index}.jpg", min_bytes=5_000)
 
 def download_music():
-    url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=cinematic+ambient"
+    url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=cinematic+ambient"
     response = requests.get(url)
     if response.status_code == 200 and response.json().get("hits"):
         track = random.choice(response.json()["hits"])
@@ -365,12 +365,12 @@ def download_music():
 def download_sfx():
     print("🔊 Downloading Sound Effects...")
     try:
-        w_url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=whoosh"
+        w_url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=whoosh"
         r_w = requests.get(w_url, timeout=15)
         if r_w.status_code == 200 and r_w.json().get("hits"):
             safe_download(r_w.json()["hits"][0]["audio"], "whoosh.mp3", min_bytes=1000)
             
-        p_url = f"https://pixabay.com/api/audio/?key={PIXABAY_API_KEY}&q=pop+bubble"
+        p_url = f"[https://pixabay.com/api/audio/?key=](https://pixabay.com/api/audio/?key=){PIXABAY_API_KEY}&q=pop+bubble"
         r_p = requests.get(p_url, timeout=15)
         if r_p.status_code == 200 and r_p.json().get("hits"):
             safe_download(r_p.json()["hits"][0]["audio"], "pop.mp3", min_bytes=500)
@@ -601,10 +601,19 @@ def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
             "portrait orientation."
         )
         
-        response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
+        for attempt in range(3):
+            try:
+                response = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
+                return False
+            except Exception as e:
+                if "429" in str(e):
+                    print(f"⏳ Gemini API rate limit hit (Attempt {attempt+1}). Pausing for 45 seconds...")
+                    time.sleep(45)
+                else:
+                    raise e
         return False
     except Exception as e:
         print(f"⚠️ AI thumbnail generation skipped: {e}")
@@ -645,7 +654,7 @@ def upload_to_youtube(video_file, data, credentials):
             
     response = youtube.videos().insert(part="snippet,status", body=body, media_body=media).execute()
     video_id = response['id']
-    print(f"✅ Success! Link: https://youtu.be/{video_id}")
+    print(f"✅ Success! Link: [https://youtu.be/](https://youtu.be/){video_id}")
 
     if os.path.exists("thumbnail.jpg"):
         try:
@@ -667,14 +676,24 @@ def post_auto_comment(video_id, script_text, credentials):
     Script: {script_text}
     """
     
-    try:
-        response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
-        comment_text = response.text.strip().strip('"')
-    except Exception as e:
-        print(f"⚠️ Failed to generate comment text: {e}")
+    comment_text = None
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
+            comment_text = response.text.strip().strip('"')
+            break
+        except Exception as e:
+            if "429" in str(e):
+                print(f"⏳ Gemini API rate limit hit for comments (Attempt {attempt+1}). Pausing for 45 seconds...")
+                time.sleep(45)
+            else:
+                print(f"⚠️ Failed to generate comment text: {e}")
+                return
+
+    if not comment_text:
         return
 
     try:
@@ -706,7 +725,7 @@ def upload_to_github_release(video_file):
     try:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
         tag = f"short-{int(time.time())}"
-        r = requests.post(f"https://api.github.com/repos/{repo}/releases", headers=headers, json={
+        r = requests.post(f"[https://api.github.com/repos/](https://api.github.com/repos/){repo}/releases", headers=headers, json={
             "tag_name": tag, "name": tag, "body": "Auto-generated video asset for cross-posting.", "draft": False, "prerelease": False,
         }, timeout=30)
         if r.status_code not in (200, 201):
@@ -738,7 +757,7 @@ def repost_via_zernio(video_file, data):
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
-        acc_r = requests.get("https://zernio.com/api/v1/accounts", headers=headers, timeout=30)
+        acc_r = requests.get("[https://zernio.com/api/v1/accounts](https://zernio.com/api/v1/accounts)", headers=headers, timeout=30)
         if acc_r.status_code != 200:
             return False
         accounts = acc_r.json().get("accounts", acc_r.json() if isinstance(acc_r.json(), list) else [])
@@ -756,7 +775,7 @@ def repost_via_zernio(video_file, data):
     try:
         caption = f"{data.get('title', '')}\n\n{data.get('description', '')}"
         r = requests.post(
-            "https://zernio.com/api/v1/posts",
+            "[https://zernio.com/api/v1/posts](https://zernio.com/api/v1/posts)",
             headers=headers,
             json={
                 "content": caption[:2200],
