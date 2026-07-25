@@ -33,7 +33,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Installing all the exact libraries your generator.py script requires
-          pip install pillow numpy python-dotenv requests google-api-python-client google-auth-oauthlib google-genai edge-tts moviepy
+          pip install pillow numpy python-dotenv requests google-api-python-client google-auth-oauthlib google-genai edge-tts moviepy==1.0.3
 
       - name: Run the Media Factory
         env:
