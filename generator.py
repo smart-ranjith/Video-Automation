@@ -69,7 +69,7 @@ def get_google_credentials():
         with open("token.pickle", "wb") as token: pickle.dump(credentials, token)
     return credentials
 
-# UPGRADE 1: Diverse Voices (Male & Female)
+# Diverse Voices (Male & Female)
 VOICE_POOL = [
     "en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural", 
     "en-US-JennyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"      
@@ -197,9 +197,11 @@ async def generate_audio_and_timestamps(text):
                 words.append({"text": chunk["text"], "start": chunk["offset"] / 10000000.0, "end": (chunk["offset"] + chunk["duration"]) / 10000000.0})
     with open("words.json", "w") as f: json.dump(words, f)
 
+# Relentless Network Downloader
 def safe_download(url, out_path, min_bytes=2048):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
-        r = requests.get(url, timeout=45)
+        r = requests.get(url, headers=headers, timeout=60)
         if r.status_code == 200 and len(r.content) > min_bytes:
             with open(out_path, "wb") as f: f.write(r.content)
             return True
@@ -211,11 +213,20 @@ def download_ai_visuals(prompts, visual_theme=""):
     print("🎨 Painting Custom AI Visuals (Full Frame)...")
     if not os.path.exists("media"): os.makedirs("media")
     pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
+    
     for index, prompt in enumerate(prompts):
         print(f"   Generating Image {index+1}/{len(prompts)}...")
         full_prompt = f"{prompt}, {visual_theme}, photorealistic, ultra detailed, cinematic lighting, full frame, edge-to-edge, no borders"
-        url = f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true"
-        safe_download(url, f"media/clip_{index}.jpg", min_bytes=20000)
+        
+        # The Retry Loop and Random Seed
+        for attempt in range(4):
+            seed = random.randint(1, 999999)
+            url = f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={seed}"
+            if safe_download(url, f"media/clip_{index}.jpg", min_bytes=20000):
+                break
+            else:
+                print(f"      ⚠️ Attempt {attempt+1} failed, retrying...")
+                time.sleep(2)
 
 def download_music():
     if os.path.exists("background_music.mp3"): return "background_music.mp3"
@@ -287,7 +298,6 @@ def is_high_impact(word):
     if any(char.isdigit() for char in word): return True
     return word.upper() in ["MILLION", "BILLION", "DEADLY", "SECRET", "NEVER", "SHOCKING", "MYSTERY", "ONLY", "FIRST"]
 
-# UPGRADE 5: Audio Ducking Engine
 def make_ducking_func(words):
     def filter_audio(get_frame, t):
         audio = get_frame(t)
@@ -299,7 +309,7 @@ def make_ducking_func(words):
     return filter_audio
 
 def assemble_video(thumbnail_text="", visual_theme=""):
-    print("\n🎬 Assembling cinematic video (Clean Edge-to-Edge with Audio Ducking)...")
+    print("\n🎬 Assembling cinematic video...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
     
@@ -311,7 +321,13 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         bgm = bgm.fl(make_ducking_func(words))
         audio_tracks.append(bgm)
 
+    # Strictly sequential sorting
     media_files = [os.path.join("media", f) for f in os.listdir("media") if f.endswith(".jpg")]
+    media_files.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+    
+    if not media_files:
+        raise Exception("CRITICAL ERROR: Zero images survived the download process.")
+
     clips = []
     current_time = 0
     media_index = 0
@@ -349,9 +365,14 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         fill = (0, 255, 255) if impact else (255, 255, 255)
         depth_col = (0, 100, 100) if impact else (0, 0, 0)
         
-        txt_active = ImageClip(render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col))
+        # FIX: Save to PNG to preserve transparency (alpha channel) for MoviePy 1.0.3
+        word_array = render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col)
+        temp_img_path = f"media/temp_word_{i}.png"
+        PIL.Image.fromarray(word_array).save(temp_img_path)
+        
+        txt_active = ImageClip(temp_img_path).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
+        
         if impact and has_sfx: audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
-        txt_active = txt_active.set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         text_clips.append(txt_active)
 
     retention_bar = ColorClip(size=(1080, 15), color=(255, 255, 0)).set_position(lambda t: (-1080 + int(1080 * (t / voice_audio.duration)), 0)).set_duration(voice_audio.duration)
@@ -362,7 +383,17 @@ def assemble_video(thumbnail_text="", visual_theme=""):
     if not generate_ai_thumbnail(thumbnail_text): generate_thumbnail(final, thumbnail_text)
     final.close()
 
-def generate_ai_thumbnail(title): return False
+# FIX: Active AI Thumbnail Generation Function
+def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
+    print("🖼️ Painting Custom AI Thumbnail...")
+    try:
+        pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
+        prompt = f"A dramatic, high-contrast YouTube thumbnail for: {title}. Theme: {visual_theme}. Bold saturated colors, strong focal point, no text, no borders."
+        url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true"
+        return safe_download(url, out_path, min_bytes=20000)
+    except Exception as e:
+        print(f"⚠️ AI thumbnail generation skipped: {e}")
+        return False
 
 def generate_thumbnail(final_clip, thumbnail_text, out_path="thumbnail.jpg"):
     from PIL import Image, ImageDraw, ImageFont
