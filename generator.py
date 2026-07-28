@@ -48,15 +48,6 @@ SCOPES = [
     _AUTH + "youtube.force-ssl"
 ]
 
-def restore_google_secrets():
-    if not os.environ.get("GITHUB_ACTIONS"): return
-    if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"): return
-    client_b64, token_b64 = os.environ.get("CLIENT_SECRETS_BASE64"), os.environ.get("TOKEN_PICKLE_BASE64")
-    if client_b64:
-        with open("client_secrets.json", "wb") as f: f.write(base64.b64decode(client_b64))
-    if token_b64:
-        with open("token.pickle", "wb") as f: f.write(base64.b64decode(token_b64))
-
 def get_google_credentials():
     credentials = None
     if os.path.exists("token.pickle"):
@@ -69,7 +60,6 @@ def get_google_credentials():
         with open("token.pickle", "wb") as token: pickle.dump(credentials, token)
     return credentials
 
-# Diverse Voices (Male & Female)
 VOICE_POOL = [
     "en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural", 
     "en-US-JennyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"      
@@ -77,7 +67,6 @@ VOICE_POOL = [
 VOICE = random.choice(VOICE_POOL)
 OUTPUT_AUDIO = "voiceover.mp3"
 
-# --- TOPIC MEMORY & CLIFFHANGER ENGINE ---
 TOPIC_HISTORY_FILE = "topic_history.json"
 CLIFFHANGER_FILE = "cliffhanger.json"
 
@@ -106,34 +95,10 @@ def fetch_top_performing_titles(credentials, max_results=5):
     except Exception: return []
 
 # --- 2. THE AI SCRIPT ENGINE ---
-def scrape_viewer_ideas(credentials):
-    print("🔍 Scanning recent videos for viewer requests...")
-    try:
-        youtube = build("youtube", "v3", credentials=credentials)
-        playlist_req = youtube.channels().list(part="contentDetails", mine=True).execute()
-        if not playlist_req.get("items"): return []
-        playlist_id = playlist_req["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-        
-        latest_vids = youtube.playlistItems().list(part="snippet", playlistId=playlist_id, maxResults=1).execute()
-        if not latest_vids.get("items"): return []
-        
-        comments = youtube.commentThreads().list(part="snippet", videoId=latest_vids["items"][0]["snippet"]["resourceId"]["videoId"], maxResults=5, order="relevance").execute()
-        ideas = [item["snippet"]["topLevelComment"]["snippet"]["textOriginal"] for item in comments.get("items", []) if len(item["snippet"]["topLevelComment"]["snippet"]["textOriginal"]) > 10]
-        if ideas:
-            with open("viewer_requests.json", "w") as f: json.dump(ideas, f)
-        return ideas
-    except Exception: return []
-
-def load_viewer_requests():
-    if os.path.exists("viewer_requests.json"):
-        with open("viewer_requests.json", "r") as f: return json.load(f)
-    return []
-
-def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
+def generate_script(avoid_topics=None, boost_topics=None):
     print("🧠 Asking Gemini to write the viral script...")
     avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
     boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
-    request_block = f"\n    Viewers literally asked for this in the comments. Base the video on one of these if possible: {' | '.join(viewer_requests)}\n" if viewer_requests else ""
 
     cliffhanger_block = ""
     if os.path.exists(CLIFFHANGER_FILE):
@@ -144,7 +109,7 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
     prompt = f"""
     You are an expert YouTube Shorts scriptwriter. Write a fast-paced 25-30 second script about a fascinating mystery. 
     Ensure the script is written entirely in English.
-    {avoid_block}{boost_block}{request_block}{cliffhanger_block}
+    {avoid_block}{boost_block}{cliffhanger_block}
     
     Structure Rules:
     1. HOOK: First 8 words must be shocking. No "did you know".
@@ -153,7 +118,7 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
     4. THE LOOP: The final sentence must be an incomplete thought that seamlessly loops into the hook.
 
     NEW CLIFFHANGER RULE:
-    - You must decide if today's video ends on a cliffhanger. If yes, set "is_cliffhanger" to true and write the unresolved question in "cliffhanger_setup" so tomorrow's AI can answer it.
+    - Decide if today's video ends on a cliffhanger. If yes, set "is_cliffhanger" to true and write the unresolved question in "cliffhanger_setup".
 
     Visual Constraints:
     - "image_prompts" must contain exactly 10 visual descriptions. Write them as prompts for an AI Image Generator (e.g., "A glowing blue bioluminescent octopus in a dark trench, cinematic lighting, 8k resolution").
@@ -168,7 +133,7 @@ def generate_script(avoid_topics=None, boost_topics=None, viewer_requests=None):
       "tags": ["#tag1", "#tag2", "#tag3"],
       "description": "...",
       "is_cliffhanger": true/false,
-      "cliffhanger_setup": "What is the mystery to solve tomorrow? (leave blank if false)"
+      "cliffhanger_setup": "..."
     }}
     """
     for attempt in range(3):
@@ -197,7 +162,6 @@ async def generate_audio_and_timestamps(text):
                 words.append({"text": chunk["text"], "start": chunk["offset"] / 10000000.0, "end": (chunk["offset"] + chunk["duration"]) / 10000000.0})
     with open("words.json", "w") as f: json.dump(words, f)
 
-# Relentless Network Downloader
 def safe_download(url, out_path, min_bytes=2048):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     try:
@@ -215,26 +179,28 @@ def download_ai_visuals(prompts, visual_theme=""):
     pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
     
     for index, prompt in enumerate(prompts):
-        print(f"   Generating Image {index+1}/{len(prompts)}...")
         full_prompt = f"{prompt}, {visual_theme}, photorealistic, ultra detailed, cinematic lighting, full frame, edge-to-edge, no borders"
-        
-        # The Retry Loop and Random Seed
         for attempt in range(4):
             seed = random.randint(1, 999999)
             url = f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={seed}"
-            if safe_download(url, f"media/clip_{index}.jpg", min_bytes=20000):
-                break
-            else:
-                print(f"      ⚠️ Attempt {attempt+1} failed, retrying...")
-                time.sleep(2)
+            if safe_download(url, f"media/clip_{index}.jpg", min_bytes=20000): break
+            else: time.sleep(2)
+
+def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
+    print("🖼️ Painting Custom AI Thumbnail...")
+    try:
+        pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
+        prompt = f"A dramatic, high-contrast YouTube thumbnail for: {title}. Theme: {visual_theme}. Bold saturated colors, strong focal point, no text, no borders."
+        url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}"
+        safe_download(url, out_path, min_bytes=20000)
+    except Exception as e: print(f"⚠️ Thumbnail generation failed: {e}")
 
 def download_music():
     if os.path.exists("background_music.mp3"): return "background_music.mp3"
     audio_api = base64.b64decode("aHR0cHM6Ly9waXhhYmF5LmNvbS9hcGkvYXVkaW8v").decode("utf-8")
     response = requests.get(audio_api, params={"key": PIXABAY_API_KEY, "q": "cinematic ambient"})
     if response.status_code == 200 and response.json().get("hits"):
-        if safe_download(random.choice(response.json()["hits"])["audio"], "background_music.mp3", 20000):
-            return "background_music.mp3"
+        if safe_download(random.choice(response.json()["hits"])["audio"], "background_music.mp3", 20000): return "background_music.mp3"
     return None
 
 def download_sfx():
@@ -308,7 +274,7 @@ def make_ducking_func(words):
         return audio * vol[:, np.newaxis]
     return filter_audio
 
-def assemble_video(thumbnail_text="", visual_theme=""):
+def assemble_video():
     print("\n🎬 Assembling cinematic video...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
@@ -321,22 +287,18 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         bgm = bgm.fl(make_ducking_func(words))
         audio_tracks.append(bgm)
 
-    # Strictly sequential sorting
     media_files = [os.path.join("media", f) for f in os.listdir("media") if f.endswith(".jpg")]
     media_files.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
-    
-    if not media_files:
-        raise Exception("CRITICAL ERROR: Zero images survived the download process.")
+    if not media_files: raise Exception("CRITICAL ERROR: Zero images survived the download process.")
 
     clips = []
     current_time = 0
     media_index = 0
-    cut_duration = 3.0
     has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
 
     while current_time < voice_audio.duration:
         media_path = media_files[media_index % len(media_files)]
-        clip_dur = min(cut_duration, voice_audio.duration - current_time)
+        clip_dur = min(3.0, voice_audio.duration - current_time)
         clip = ImageClip(media_path).set_duration(clip_dur).resize(height=1920).crop(x_center=1080/2, y_center=1920/2, width=1080, height=1920)
         clip = apply_random_motion(clip, clip_dur).fl(safe_color_grade).set_start(current_time)
         if current_time > 0: clip = clip.crossfadein(0.2)
@@ -365,49 +327,27 @@ def assemble_video(thumbnail_text="", visual_theme=""):
         fill = (0, 255, 255) if impact else (255, 255, 255)
         depth_col = (0, 100, 100) if impact else (0, 0, 0)
         
-        # FIX: Save to PNG to preserve transparency (alpha channel) for MoviePy 1.0.3
+        # FIX 1: Add has_mask=True to preserve transparency in MoviePy 1.0.3
         word_array = render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col)
         temp_img_path = f"media/temp_word_{i}.png"
         PIL.Image.fromarray(word_array).save(temp_img_path)
         
-        txt_active = ImageClip(temp_img_path).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
-        
+        txt_active = ImageClip(temp_img_path, has_mask=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         if impact and has_sfx: audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
         text_clips.append(txt_active)
 
     retention_bar = ColorClip(size=(1080, 15), color=(255, 255, 0)).set_position(lambda t: (-1080 + int(1080 * (t / voice_audio.duration)), 0)).set_duration(voice_audio.duration)
     
+    # FIX 2: Force the AI Thumbnail into the first 0.1 seconds of the timeline so YouTube naturally detects it.
+    if os.path.exists("thumbnail.jpg"):
+        print("📌 Injecting AI Thumbnail into timeline (Frame 0 Hack)...")
+        thumb_clip = ImageClip("thumbnail.jpg").set_duration(0.1).resize(height=1920).crop(x_center=1080/2, y_center=1920/2, width=1080, height=1920)
+        text_clips.insert(0, thumb_clip.set_start(0))
+
     final_audio = CompositeAudioClip(audio_tracks)
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
     final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac", threads=4, bitrate="8000k", ffmpeg_params=["-maxrate", "8000k", "-bufsize", "16000k", "-crf", "20"])
-    if not generate_ai_thumbnail(thumbnail_text): generate_thumbnail(final, thumbnail_text)
     final.close()
-
-# FIX: Active AI Thumbnail Generation Function
-def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
-    print("🖼️ Painting Custom AI Thumbnail...")
-    try:
-        pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
-        prompt = f"A dramatic, high-contrast YouTube thumbnail for: {title}. Theme: {visual_theme}. Bold saturated colors, strong focal point, no text, no borders."
-        url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true"
-        return safe_download(url, out_path, min_bytes=20000)
-    except Exception as e:
-        print(f"⚠️ AI thumbnail generation skipped: {e}")
-        return False
-
-def generate_thumbnail(final_clip, thumbnail_text, out_path="thumbnail.jpg"):
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.fromarray(final_clip.get_frame(min(final_clip.duration * 0.15, 2.0))).convert("RGB")
-    draw = ImageDraw.Draw(img)
-    try: font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 110)
-    except Exception: font = ImageFont.load_default()
-    W, H = img.size
-    bbox = draw.textbbox((0, 0), thumbnail_text.upper(), font=font)
-    x, y = (W - (bbox[2] - bbox[0])) / 2, H * 0.28
-    for dx in range(-6, 7, 3):
-        for dy in range(-6, 7, 3): draw.text((x + dx, y + dy), thumbnail_text.upper(), font=font, fill="black")
-    draw.text((x, y), thumbnail_text.upper(), font=font, fill="yellow")
-    img.save(out_path, quality=92)
 
 # --- 6. UPLOAD & SYNDICATION ---
 def upload_to_youtube(video_file, data, credentials):
@@ -416,50 +356,45 @@ def upload_to_youtube(video_file, data, credentials):
     body = {"snippet": {"categoryId": "28", "title": data["title"], "description": f"{data['description']}\n\n{hashtags}", "tags": data["tags"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
     video_id = youtube.videos().insert(part="snippet,status", body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
     print(f"✅ Success! YouTube Link: [https://youtu.be/](https://youtu.be/){video_id}")
-    if os.path.exists("thumbnail.jpg"):
-        try: youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload("thumbnail.jpg")).execute()
-        except Exception: pass
     return video_id
 
 def post_auto_comment(video_id, script_text, credentials):
     print("💬 Generating and posting auto-comment...")
     youtube = build("youtube", "v3", credentials=credentials)
-    prompt = f"Read this short YouTube script and write ONE short, highly engaging question to pin in the comments to provoke viewers into debating. Keep under 15 words. Script: {script_text}"
+    prompt = f"Read this short YouTube script and write ONE short, highly engaging question to pin in the comments. Keep under 15 words. Script: {script_text}"
     for attempt in range(3):
         try:
             comment_text = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt).text.strip().strip('"')
             youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": comment_text}}}}).execute()
             print(f"✅ Auto-comment posted successfully: '{comment_text}'")
             return
-        except Exception as e:
-            if "429" in str(e) or "503" in str(e): time.sleep(45)
-            else: return
+        except Exception: time.sleep(5)
 
-def upload_to_github_release(video_file):
-    token = os.environ.get("GITHUB_TOKEN")
-    repo = os.environ.get("GITHUB_REPOSITORY")  
-    if not token or not repo:
-        print("ℹ️ GitHub Hosting skipped (No Token/Repo found).")
-        return None
+# FIX 3: Replaced GitHub Release with Anonymous Cloud Uploader
+def get_public_url(video_file):
+    print("☁️ Uploading to anonymous cloud for Zernio cross-posting...")
     try:
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-        tag = f"short-{int(time.time())}"
-        r = requests.post(base64.b64decode("aHR0cHM6Ly9hcGkuZ2l0aHViLmNvbS9yZXBvcy8=").decode("utf-8") + f"{repo}/releases", headers=headers, json={"tag_name": tag, "name": tag, "body": "Auto-generated asset."}, timeout=30)
-        if r.status_code not in (200, 201): return None
-        upload_url = r.json()["upload_url"].split("{")[0]
         with open(video_file, "rb") as f:
-            r2 = requests.post(f"{upload_url}?name=final_short.mp4", headers={**headers, "Content-Type": "video/mp4"}, data=f.read(), timeout=180)
-        return r2.json().get("browser_download_url") if r2.status_code in (200, 201) else None
-    except Exception: return None
+            r = requests.post("[https://tmpfiles.org/api/v1/upload](https://tmpfiles.org/api/v1/upload)", files={"file": f}, timeout=180)
+            if r.status_code == 200:
+                # tmpfiles returns a viewing URL. We must convert it to a direct download link (/dl/)
+                raw_url = r.json()["data"]["url"]
+                direct_link = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                print(f"   🔗 Direct Link generated: {direct_link}")
+                return direct_link
+    except Exception as e:
+        print(f"⚠️ Cloud upload failed: {e}")
+    return None
 
 def repost_via_zernio(video_file, data):
     api_key = os.environ.get("ZERNIO_API_KEY")
     if not api_key:
         print("ℹ️ Zernio cross-posting skipped (ZERNIO_API_KEY not set).")
         return False
-    video_public_url = upload_to_github_release(video_file)
+        
+    video_public_url = get_public_url(video_file)
     if not video_public_url:
-        print("ℹ️ Zernio cross-posting skipped (Failed to host video publicly).")
+        print("ℹ️ Zernio cross-posting skipped (Failed to get direct public link).")
         return False
     
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -467,36 +402,41 @@ def repost_via_zernio(video_file, data):
         acc_r = requests.get(base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8"), headers=headers, timeout=30)
         accounts = acc_r.json().get("accounts", acc_r.json() if isinstance(acc_r.json(), list) else [])
         platform_entries = [{"platform": acc["platform"], "accountId": acc.get("_id") or acc.get("id") or acc.get("accountId")} for acc in accounts if acc.get("platform") in ("instagram", "facebook", "tiktok")]
-        if not platform_entries: return False
+        
+        if not platform_entries: 
+            print("⚠️ No Facebook/Instagram/TikTok accounts found in Zernio.")
+            return False
 
         caption = f"{data.get('title', '')}\n\n{data.get('description', '')}"
         r = requests.post(base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8"), headers=headers, json={"content": caption[:2200], "mediaItems": [{"type": "video", "url": video_public_url}], "platforms": platform_entries, "publishNow": True}, timeout=120)
-        body = r.json()
         
-        if r.status_code in (200, 201, 202, 207) and "error" not in body:
-            print("🚀 Successfully triggered cross-posting to other platforms!")
+        if r.status_code in (200, 201, 202, 207) and "error" not in r.json():
+            print("🚀 Successfully triggered cross-posting to Instagram/Facebook via Zernio!")
             return True
-        return False
-    except Exception: return False
+        else:
+            print(f"⚠️ Zernio Error: {r.json()}")
+    except Exception as e: 
+        print(f"⚠️ Zernio connection failed: {e}")
+    return False
 
 async def main():
-    restore_google_secrets()
+    if not os.path.exists("media"): os.makedirs("media")
     credentials = get_google_credentials()
     
-    scrape_viewer_ideas(credentials)
-    viewer_requests = load_viewer_requests()
     boost_topics = fetch_top_performing_titles(credentials)
-    
-    content = generate_script(avoid_topics=[h["title"] for h in load_topic_history()], boost_topics=boost_topics, viewer_requests=viewer_requests)
+    content = generate_script(avoid_topics=[h["title"] for h in load_topic_history()], boost_topics=boost_topics)
     await generate_audio_and_timestamps(content["script"])
         
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
+    generate_ai_thumbnail(content.get("thumbnail_text", content.get("title", "")), content.get("visual_theme", ""))
     download_sfx()
-    assemble_video(content.get("thumbnail_text", content.get("title", "")), content.get("visual_theme", ""))
+    
+    assemble_video()
     
     video_id = upload_to_youtube("final_short.mp4", content, credentials)
     post_auto_comment(video_id, content["script"], credentials)
     save_topic_history({"title": content["title"], "video_id": video_id, "date": time.strftime("%Y-%m-%d")})
+    
     repost_via_zernio("final_short.mp4", content)
 
 if __name__ == "__main__":
