@@ -421,6 +421,7 @@ def repost_via_zernio(video_file, data):
 
 async def main():
     if not os.path.exists("media"): os.makedirs("media")
+    restore_google_secrets()  # <--- THIS IS THE MISSING LINE
     credentials = get_google_credentials()
     
     boost_topics = fetch_top_performing_titles(credentials)
