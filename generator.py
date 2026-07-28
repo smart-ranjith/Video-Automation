@@ -379,17 +379,19 @@ def post_auto_comment(video_id, script_text, credentials):
             return
         except Exception: time.sleep(5)
 
-# FIX 3: Replaced GitHub Release with Anonymous Cloud Uploader (Base64 Protected)
+# FIX 3: Replaced tmpfiles with catbox.moe (True Direct MP4 Hotlinking)
 def get_public_url(video_file):
     print("☁️ Uploading to anonymous cloud for Zernio cross-posting...")
     try:
         with open(video_file, "rb") as f:
-            # Base64 encoded to prevent the chat window from corrupting the URL
-            upload_api = base64.b64decode("aHR0cHM6Ly90bXBmaWxlcy5vcmcvYXBpL3YxL3VwbG9hZA==").decode("utf-8")
-            r = requests.post(upload_api, files={"file": f}, timeout=180)
+            # Base64 encoded: "https://catbox.moe/user/api.php"
+            upload_api = base64.b64decode("aHR0cHM6Ly9jYXRib3gubW9lL3VzZXIvYXBpLnBocA==").decode("utf-8")
+            
+            # Catbox requires the 'reqtype' parameter to process the raw file
+            r = requests.post(upload_api, data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=180)
+            
             if r.status_code == 200:
-                raw_url = r.json()["data"]["url"]
-                direct_link = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                direct_link = r.text.strip()
                 print(f"   🔗 Direct Link generated: {direct_link}")
                 return direct_link
     except Exception as e:
