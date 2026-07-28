@@ -48,6 +48,15 @@ SCOPES = [
     _AUTH + "youtube.force-ssl"
 ]
 
+def restore_google_secrets():
+    if not os.environ.get("GITHUB_ACTIONS"): return
+    if os.path.exists("client_secrets.json") and os.path.exists("token.pickle"): return
+    client_b64, token_b64 = os.environ.get("CLIENT_SECRETS_BASE64"), os.environ.get("TOKEN_PICKLE_BASE64")
+    if client_b64:
+        with open("client_secrets.json", "wb") as f: f.write(base64.b64decode(client_b64))
+    if token_b64:
+        with open("token.pickle", "wb") as f: f.write(base64.b64decode(token_b64))
+
 def get_google_credentials():
     credentials = None
     if os.path.exists("token.pickle"):
