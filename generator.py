@@ -379,14 +379,15 @@ def post_auto_comment(video_id, script_text, credentials):
             return
         except Exception: time.sleep(5)
 
-# FIX 3: Replaced GitHub Release with Anonymous Cloud Uploader
+# FIX 3: Replaced GitHub Release with Anonymous Cloud Uploader (Base64 Protected)
 def get_public_url(video_file):
     print("☁️ Uploading to anonymous cloud for Zernio cross-posting...")
     try:
         with open(video_file, "rb") as f:
-            r = requests.post("[https://tmpfiles.org/api/v1/upload](https://tmpfiles.org/api/v1/upload)", files={"file": f}, timeout=180)
+            # Base64 encoded to prevent the chat window from corrupting the URL
+            upload_api = base64.b64decode("aHR0cHM6Ly90bXBmaWxlcy5vcmcvYXBpL3YxL3VwbG9hZA==").decode("utf-8")
+            r = requests.post(upload_api, files={"file": f}, timeout=180)
             if r.status_code == 200:
-                # tmpfiles returns a viewing URL. We must convert it to a direct download link (/dl/)
                 raw_url = r.json()["data"]["url"]
                 direct_link = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                 print(f"   🔗 Direct Link generated: {direct_link}")
