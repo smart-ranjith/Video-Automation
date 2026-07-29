@@ -88,22 +88,35 @@ def save_topic_history(entry):
     history.append(entry)
     with open(TOPIC_HISTORY_FILE, "w") as f: json.dump(history[-100:], f, indent=2)
 
-def fetch_top_performing_titles(credentials, max_results=5):
+def log_weekly_analytics(credentials):
+    print("📊 Compiling Weekly Channel Performance Report...")
     try:
         analytics = build("youtubeAnalytics", "v2", credentials=credentials)
         youtube = build("youtube", "v3", credentials=credentials)
         end = time.strftime("%Y-%m-%d")
-        start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
-        report = analytics.reports().query(ids="channel==MINE", startDate=start, endDate=end, metrics="views", dimensions="video", sort="-views", maxResults=max_results).execute()
+        start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 7 * 86400))
+        
+        report = analytics.reports().query(
+            ids="channel==MINE", startDate=start, endDate=end, 
+            metrics="views,estimatedMinutesWatched,averageViewDuration", 
+            dimensions="video", sort="-views", maxResults=10
+        ).execute()
+        
         rows = report.get("rows", [])
-        if not rows: return []
-        vids = youtube.videos().list(part="snippet", id=",".join([r[0] for r in rows])).execute()
-        return [item["snippet"]["title"] for item in vids.get("items", [])]
-    except Exception: return []
+        if not rows: return
 
-# --- 2. THE AI SCRIPT ENGINE (English Optimized) ---
+        vids_info = youtube.videos().list(part="snippet,statistics", id=",".join([r[0] for r in rows])).execute()
+        weekly_data = [{"title": item["snippet"]["title"], "views": item["statistics"].get("viewCount", "0"), "likes": item["statistics"].get("likeCount", "0")} for item in vids_info.get("items", [])]
+        
+        with open("performance_report.json", "w", encoding="utf-8") as f:
+            json.dump({"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "top_videos_this_week": weekly_data}, f, indent=2)
+        print("✅ Weekly telemetry report saved to 'performance_report.json'")
+    except Exception as e:
+        print(f"⚠️ Analytics report skipped: {e}")
+
+# --- 2. THE AI SCRIPT ENGINE (Trend-Jacked via Google Search) ---
 def generate_script(avoid_topics=None, boost_topics=None):
-    print("🧠 Asking Gemini to write the algorithm-optimized script...")
+    print("🧠 Asking Gemini to scan live web trends and write the script...")
     avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
     boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
 
@@ -114,12 +127,12 @@ def generate_script(avoid_topics=None, boost_topics=None):
         os.remove(CLIFFHANGER_FILE)
 
     prompt = f"""
-    You are an expert YouTube Shorts scriptwriter optimizing for the algorithm (target: 85%+ retention).
-    Write a 20-25 second mystery script in English. No filler. Ruthless pacing.
+    Search the web for current viral mystery trends, unsolved phenomena, or fascinating historical oddities trending right now.
+    Write an optimized 20-25 second YouTube Shorts script in English based on a fresh trending concept. No filler.
     {avoid_block}{boost_block}{cliffhanger_block}
     
     Structure Rules:
-    1. HOOK (First 3 seconds): Must be visually and verbally shocking. No "Did you know".
+    1. HOOK (First 3 seconds): Visually and verbally shocking. No "Did you know".
     2. BODY: Fast, punchy fragments. 
     3. THE LOOP: The final sentence must seamlessly bleed back into the first word of the hook.
     
@@ -151,9 +164,17 @@ def generate_script(avoid_topics=None, boost_topics=None):
       ]
     }}
     """
-    for attempt in range(3):
+    for attempt in (3):
         try:
-            response = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt, config=types.GenerateContentConfig(response_mime_type="application/json"))
+            # Enable Google Search Grounding for live trend-jacking
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt, 
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+            )
             raw_text = response.text.strip()
             if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
             data = json.loads(raw_text)
@@ -419,6 +440,9 @@ async def main():
     if not os.path.exists("media"): os.makedirs("media")
     restore_google_secrets()
     credentials = get_google_credentials()
+    
+    # Run the Weekly Analytics Telemetry Logger
+    log_weekly_analytics(credentials)
     
     boost_topics = fetch_top_performing_titles(credentials)
     content = generate_script(avoid_topics=[h["title"] for h in load_topic_history()], boost_topics=boost_topics)
