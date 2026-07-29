@@ -69,9 +69,11 @@ def get_google_credentials():
         with open("token.pickle", "wb") as token: pickle.dump(credentials, token)
     return credentials
 
-# Multi-Language Voice Actors
-VOICE_EN = random.choice(["en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural"])
-VOICE_ES = random.choice(["es-ES-AlvaroNeural", "es-MX-JorgeNeural"])
+VOICE = random.choice([
+    "en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural", 
+    "en-US-JennyNeural", "en-US-AriaNeural", "en-GB-SoniaNeural"      
+])
+OUTPUT_AUDIO = "voiceover.mp3"
 
 TOPIC_HISTORY_FILE = "topic_history.json"
 CLIFFHANGER_FILE = "cliffhanger.json"
@@ -99,41 +101,47 @@ def fetch_top_performing_titles(credentials, max_results=5):
         return [item["snippet"]["title"] for item in vids.get("items", [])]
     except Exception: return []
 
-# --- 2. THE AI SCRIPT ENGINE (Multi-Language & Sound Design) ---
+# --- 2. THE AI SCRIPT ENGINE (English Optimized) ---
 def generate_script(avoid_topics=None, boost_topics=None):
-    print("🧠 Asking Gemini to write the Dual-Language script and Sound Design...")
+    print("🧠 Asking Gemini to write the algorithm-optimized script...")
     avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
     boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
 
+    cliffhanger_block = ""
+    if os.path.exists(CLIFFHANGER_FILE):
+        with open(CLIFFHANGER_FILE, "r") as f: pending_mystery = f.read()
+        cliffhanger_block = f"\n    URGENT: Resolve yesterday's cliffhanger in the first sentence: '{pending_mystery}'\n"
+        os.remove(CLIFFHANGER_FILE)
+
     prompt = f"""
-    You are an expert YouTube Shorts producer. Write a 20-25 second mystery script. No filler. 
-    You must provide the script, SEO metadata, and description in BOTH English and Spanish.
-    {avoid_block}{boost_block}
+    You are an expert YouTube Shorts scriptwriter optimizing for the algorithm (target: 85%+ retention).
+    Write a 20-25 second mystery script in English. No filler. Ruthless pacing.
+    {avoid_block}{boost_block}{cliffhanger_block}
     
     Structure Rules:
-    1. HOOK (First 3 seconds): Visually and verbally shocking. No "Did you know".
+    1. HOOK (First 3 seconds): Must be visually and verbally shocking. No "Did you know".
     2. BODY: Fast, punchy fragments. 
     3. THE LOOP: The final sentence must seamlessly bleed back into the first word of the hook.
     
     Monetization & Engagement:
-    - "affiliate_keyword": A generic 1-2 word product search term (e.g., "telescope", "metal detector").
-    - "poll_question": A highly debatable question about this topic.
-    - "poll_options": Array of 3 short possible answers.
+    - "affiliate_keyword": A generic 1-2 word product search term related to this mystery (e.g., "telescope", "metal detector").
+    - "poll_question": A highly debatable question about this topic for a Community Tab Poll.
+    - "poll_options": An array of 3 short possible answers.
 
     Cinematic Sound Design:
     - "sfx_cues": Assign 2 or 3 sound effects to specific image clips. Provide the "clip_index" (0 to 9) and a 1-2 word "query" to search on Pixabay (e.g., "heartbeat", "thunder", "metal clank"). 
 
     Format as valid JSON exactly like this:
     {{
-      "script_en": "English script...",
-      "script_es": "Spanish translation of the script...",
-      "visual_theme": "Cyberpunk or cinematic theme...",
-      "image_prompts": ["...", "...", "..."], 
-      "title_en": "SEO Title #shorts",
-      "title_es": "Spanish SEO Title #shorts",
+      "script": "...",
+      "visual_theme": "...",
+      "image_prompts": ["...", "...", "..."],
+      "title": "SEO Title #shorts",
+      "thumbnail_text": "...",
       "tags": ["#tag1", "#tag2", "#tag3"],
-      "description_en": "English description...",
-      "description_es": "Spanish description...",
+      "description": "...",
+      "is_cliffhanger": true/false,
+      "cliffhanger_setup": "...",
       "affiliate_keyword": "...",
       "poll_question": "...",
       "poll_options": ["...", "...", "..."],
@@ -148,12 +156,12 @@ def generate_script(avoid_topics=None, boost_topics=None):
             response = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=prompt, config=types.GenerateContentConfig(response_mime_type="application/json"))
             raw_text = response.text.strip()
             if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
-            return json.loads(raw_text)
+            data = json.loads(raw_text)
+            if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
+                with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
+            return data
         except Exception as e:
-            print(f"⚠️ Gemini Attempt {attempt + 1} Failed!")
-            print(f"❌ Error Details: {e}")
-            if 'raw_text' in locals():
-                print(f"📄 Raw Output it tried to read:\n{raw_text}\n")
+            print(f"⚠️ Gemini Attempt {attempt + 1} Failed: {e}")
             if "429" in str(e) or "503" in str(e): time.sleep(45)
             else: time.sleep(5)
     raise Exception("Failed to get response from Gemini.")
@@ -170,16 +178,16 @@ def save_community_post(data):
     except Exception: pass
 
 # --- 3. AUDIO & SFX SYNC ---
-async def generate_audio_and_timestamps(text, voice, out_audio, out_words):
-    print(f"🎙️ Generating AI Voiceover ({voice})...")
-    communicate = edge_tts.Communicate(text, voice)
+async def generate_audio_and_timestamps(text):
+    print(f"🎙️ Generating AI Voiceover ({VOICE})...")
+    communicate = edge_tts.Communicate(text, VOICE)
     words = []
-    with open(out_audio, "wb") as fp:
+    with open(OUTPUT_AUDIO, "wb") as fp:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio": fp.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
                 words.append({"text": chunk["text"], "start": chunk["offset"] / 10000000.0, "end": (chunk["offset"] + chunk["duration"]) / 10000000.0})
-    with open(out_words, "w") as f: json.dump(words, f)
+    with open("words.json", "w") as f: json.dump(words, f)
 
 def safe_download(url, out_path, min_bytes=2048):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -284,12 +292,12 @@ def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color
 def is_high_impact(word):
     return any(char.isdigit() for char in word) or word.strip(".,!?\"'").upper() in ["MILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY"]
 
-def assemble_video(out_file, audio_file, words_file, dynamic_sfx_map, thumbnail_text):
-    print(f"\n🎬 Assembling cinematic video: {out_file}...")
-    voice_audio = AudioFileClip(audio_file)
+def assemble_video(dynamic_sfx_map):
+    print("\n🎬 Assembling cinematic video...")
+    voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
     
-    with open(words_file, "r") as f: words = json.load(f)
+    with open("words.json", "r") as f: words = json.load(f)
     
     if os.path.exists("background_music.mp3"):
         def filter_audio(get_frame, t):
@@ -316,7 +324,6 @@ def assemble_video(out_file, audio_file, words_file, dynamic_sfx_map, thumbnail_
         clips.append(clip)
         
         if has_sfx and current_time > 0: audio_tracks.append(AudioFileClip("whoosh.mp3").set_start(current_time).fx(afx.volumex, 0.3))
-        # 🎵 Inject Cinematic SFX exactly when this image appears
         if media_index in dynamic_sfx_map:
             audio_tracks.append(AudioFileClip(dynamic_sfx_map[media_index]).set_start(current_time).fx(afx.volumex, 0.5))
             
@@ -349,14 +356,14 @@ def assemble_video(out_file, audio_file, words_file, dynamic_sfx_map, thumbnail_
         text_clips.append(txt_active)
 
     retention_bar = ColorClip(size=(1080, 15), color=(255, 255, 0)).set_position(lambda t: (-1080 + int(1080 * (t / voice_audio.duration)), 0)).set_duration(voice_audio.duration)
-
-    # 📌 Injecting AI Thumbnail into timeline (Frame 0 Hack)
+    
     if os.path.exists("thumbnail.jpg"):
         thumb_clip = ImageClip("thumbnail.jpg").set_duration(0.1).resize(height=1920).crop(x_center=1080/2, y_center=1920/2, width=1080, height=1920)
         text_clips.insert(0, thumb_clip.set_start(0))
+
     final_audio = CompositeAudioClip(audio_tracks)
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
-    final.write_videofile(out_file, fps=24, codec="libx264", audio_codec="aac", threads=4, bitrate="8000k", ffmpeg_params=["-maxrate", "8000k", "-bufsize", "16000k", "-crf", "20"])
+    final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac", threads=4, bitrate="8000k", ffmpeg_params=["-maxrate", "8000k", "-bufsize", "16000k", "-crf", "20"])
     final.close()
 
 # --- 5. UPLOAD & SYNDICATION ---
@@ -416,47 +423,20 @@ async def main():
     boost_topics = fetch_top_performing_titles(credentials)
     content = generate_script(avoid_topics=[h["title"] for h in load_topic_history()], boost_topics=boost_topics)
     
-    # Run heavy downloads ONCE for both languages
+    await generate_audio_and_timestamps(content["script"])
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
+    generate_ai_thumbnail(content.get("thumbnail_text", content.get("title", "")), content.get("visual_theme", ""))
     download_sfx()
     dynamic_sfx_map = download_dynamic_sfx(content.get("sfx_cues", []))
     save_community_post(content)
-
-    generate_ai_thumbnail(content.get("title_en", "Mystery"), content.get("visual_theme", ""))
     
-    # 🌍 THE MULTI-LANGUAGE DUBBING LOOP 🌍
-    languages = [
-        {"code": "en", "voice": VOICE_EN, "suffix": ""},
-        {"code": "es", "voice": VOICE_ES, "suffix": " (Spanish Dub)"}
-    ]
+    assemble_video(dynamic_sfx_map)
     
-    for lang in languages:
-        code = lang["code"]
-        if f"script_{code}" not in content: continue
-        print(f"\n======================================")
-        print(f"🎬 PROCESSING LANGUAGE BATCH: {code.upper()}")
-        print(f"======================================")
-        
-        audio_f = f"voiceover_{code}.mp3"
-        words_f = f"words_{code}.json"
-        video_f = f"final_short_{code}.mp4"
-        
-        await generate_audio_and_timestamps(content[f"script_{code}"], lang["voice"], audio_f, words_f)
-        assemble_video(video_f, audio_f, words_f, dynamic_sfx_map, content[f"title_{code}"])
-        
-        # Package data for the uploader
-        upload_data = content.copy()
-        upload_data["title"] = content[f"title_{code}"] + lang["suffix"]
-        upload_data["description"] = content[f"description_{code}"]
-        
-        vid_id, aff_link = upload_to_youtube(video_f, upload_data, credentials)
-        if vid_id:
-            post_auto_comment(vid_id, content[f"script_{code}"], aff_link, credentials)
-            save_topic_history({"title": upload_data["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d")})
-        repost_via_zernio(video_f, upload_data)
-        
-        # Keep YouTube happy by pausing between dual uploads
-        time.sleep(15)
+    vid_id, aff_link = upload_to_youtube("final_short.mp4", content, credentials)
+    if vid_id:
+        post_auto_comment(vid_id, content["script"], aff_link, credentials)
+        save_topic_history({"title": content["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d")})
+    repost_via_zernio("final_short.mp4", content)
 
 if __name__ == "__main__":
     asyncio.run(main())
