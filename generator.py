@@ -150,6 +150,10 @@ def generate_script(avoid_topics=None, boost_topics=None):
             if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
             return json.loads(raw_text)
         except Exception as e:
+            print(f"⚠️ Gemini Attempt {attempt + 1} Failed!")
+            print(f"❌ Error Details: {e}")
+            if 'raw_text' in locals():
+                print(f"📄 Raw Output it tried to read:\n{raw_text}\n")
             if "429" in str(e) or "503" in str(e): time.sleep(45)
             else: time.sleep(5)
     raise Exception("Failed to get response from Gemini.")
