@@ -379,21 +379,25 @@ def post_auto_comment(video_id, script_text, credentials):
             return
         except Exception: time.sleep(5)
 
-# FIX 3: Replaced tmpfiles with catbox.moe (True Direct MP4 Hotlinking)
+# FIX 3: Replaced Catbox with PixelDrain (Cloud-Runner Friendly & Direct MP4 Hotlinking)
 def get_public_url(video_file):
-    print("☁️ Uploading to anonymous cloud for Zernio cross-posting...")
+    print("☁️ Uploading to PixelDrain for Zernio cross-posting...")
     try:
         with open(video_file, "rb") as f:
-            # Base64 encoded: "https://catbox.moe/user/api.php"
-            upload_api = base64.b64decode("aHR0cHM6Ly9jYXRib3gubW9lL3VzZXIvYXBpLnBocA==").decode("utf-8")
+            # Base64 encoded: "https://pixeldrain.com/api/file"
+            upload_api = base64.b64decode("aHR0cHM6Ly9waXhlbGRyYWluLmNvbS9hcGkvZmlsZQ==").decode("utf-8")
             
-            # Catbox requires the 'reqtype' parameter to process the raw file
-            r = requests.post(upload_api, data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=180)
+            r = requests.post(upload_api, files={"file": f}, timeout=180)
             
-            if r.status_code == 200:
-                direct_link = r.text.strip()
-                print(f"   🔗 Direct Link generated: {direct_link}")
-                return direct_link
+            if r.status_code in (200, 201):
+                file_id = r.json().get("id")
+                if file_id:
+                    # PixelDrain returns the raw video stream at this exact endpoint
+                    direct_link = f"{upload_api}/{file_id}"
+                    print(f"   🔗 Direct Link generated: {direct_link}")
+                    return direct_link
+            else:
+                print(f"⚠️ Host rejected upload (Status {r.status_code}): {r.text}")
     except Exception as e:
         print(f"⚠️ Cloud upload failed: {e}")
     return None
