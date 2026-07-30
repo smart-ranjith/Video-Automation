@@ -179,7 +179,11 @@ def generate_script(avoid_topics=None, boost_topics=None):
       ]
     }}
     """
-    for attempt in (3):
+    # CHANGE THIS:
+    # for attempt in (3):
+
+    # TO THIS:
+    for attempt in range(3):
         try:
             # Enable Google Search Grounding for live trend-jacking
             response = gemini_client.models.generate_content(
