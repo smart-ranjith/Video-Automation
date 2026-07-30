@@ -88,6 +88,21 @@ def save_topic_history(entry):
     history.append(entry)
     with open(TOPIC_HISTORY_FILE, "w") as f: json.dump(history[-100:], f, indent=2)
 
+def fetch_top_performing_titles(credentials, max_results=5):
+    try:
+        analytics = build("youtubeAnalytics", "v2", credentials=credentials)
+        youtube = build("youtube", "v3", credentials=credentials)
+        end = time.strftime("%Y-%m-%d")
+        start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
+        report = analytics.reports().query(ids="channel==MINE", startDate=start, endDate=end, metrics="views", dimensions="video", sort="-views", maxResults=max_results).execute()
+        rows = report.get("rows", [])
+        if not rows: return []
+        vids = youtube.videos().list(part="snippet", id=",".join([r[0] for r in rows])).execute()
+        return [item["snippet"]["title"] for item in vids.get("items", [])]
+    except Exception as e:
+        print(f"⚠️ Notice: YouTube Analytics API not enabled or accessible (skipping boost topics): {e}")
+        return []
+
 def log_weekly_analytics(credentials):
     print("📊 Compiling Weekly Channel Performance Report...")
     try:
@@ -112,7 +127,7 @@ def log_weekly_analytics(credentials):
             json.dump({"generated_at": time.strftime("%Y-%m-%d %H:%M:%S"), "top_videos_this_week": weekly_data}, f, indent=2)
         print("✅ Weekly telemetry report saved to 'performance_report.json'")
     except Exception as e:
-        print(f"⚠️ Analytics report skipped: {e}")
+        print(f"⚠️ Analytics report skipped safely: {e}")
 
 # --- 2. THE AI SCRIPT ENGINE (Trend-Jacked via Google Search) ---
 def generate_script(avoid_topics=None, boost_topics=None):
