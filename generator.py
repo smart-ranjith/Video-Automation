@@ -318,6 +318,26 @@ def safe_color_grade(get_frame, t):
     frame = get_frame(t).astype(np.float32)
     return np.clip((frame - 127.0) * 1.05 + 127.0 * 1.02, 0, 255).astype('uint8')
 
+def apply_procedural_compositing(clip):
+    """Simulates a human editor adding a cinematic vignette and subtle film grain."""
+    def add_texture(get_frame, t):
+        frame = get_frame(t).astype(np.float32)
+        h, w = frame.shape[:2]
+        
+        # 1. Generate Vignette (Darken edges to guide the eye)
+        X, Y = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
+        radius = np.sqrt(X**2 + Y**2)
+        vignette = np.clip(1 - (radius * 0.6), 0, 1)
+        
+        # 2. Add subtle moving grain
+        noise = np.random.normal(loc=0, scale=8, size=frame.shape).astype(np.float32)
+        
+        # Blend layout
+        composited = (frame * vignette[:, :, np.newaxis]) + noise
+        return np.clip(composited, 0, 255).astype(np.uint8)
+        
+    return clip.fl(add_texture)
+
 def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0)):
     from PIL import Image, ImageDraw, ImageFont
     try: font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", fontsize)
@@ -417,7 +437,7 @@ def assemble_video(dynamic_sfx_map):
 
     final_audio = CompositeAudioClip(audio_tracks)
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
-    
+    final = apply_procedural_compositing(final)
     # Export with ultra-high quality CRF 18 and 12,000k bitrate
     final.write_videofile(
         "final_short.mp4", 
