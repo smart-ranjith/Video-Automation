@@ -22,6 +22,7 @@ import moviepy.audio.fx.all as afx
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import base64
+from ai_render_engine import ProceduralAIVideoGenerator, AIVideoEngine
 
 # --- 1. SETUP & SECRETS ---
 try:
@@ -105,18 +106,14 @@ def fetch_top_performing_titles(credentials, max_results=5):
 
 def fetch_high_reach_tags(credentials):
     print("🔍 Fetching tags from your highest-reach videos...")
-    # Your proven fallback list in case the API is slow
     fallback_tags = ["#ScienceMystery", "#SpaceMystery", "#Unexplained", "#ScienceFacts", "#Cosmos", "#EarthMystery", "#UnsolvedMysteries", "#AlienLife", "#Astrophysics", "#CosmicSecrets", "#NatureFacts", "#SpaceShorts", "#Shorts", "#DarkMatter", "#Universe", "#DeepEarth", "#Geology", "#PlanetEarth", "#SETI"]
     try:
         youtube = build("youtube", "v3", credentials=credentials)
-        
-        # 1. Search for your top 5 most-viewed videos
         search_res = youtube.search().list(part="id", forMine=True, type="video", order="viewCount", maxResults=5).execute()
         video_ids = [item["id"]["videoId"] for item in search_res.get("items", [])]
         
         if not video_ids: return fallback_tags
         
-        # 2. Fetch the actual hidden tags used in those specific videos
         vid_res = youtube.videos().list(part="snippet", id=",".join(video_ids)).execute()
         dynamic_tags = []
         for item in vid_res.get("items", []):
@@ -124,10 +121,9 @@ def fetch_high_reach_tags(credentials):
         
         if not dynamic_tags: return fallback_tags
         
-        # 3. Clean and format the tags (add #, remove spaces, deduplicate)
         formatted_tags = list(set([f"#{t.replace(' ', '').replace('#', '')}" for t in dynamic_tags]))
         print(f"✅ Successfully extracted {len(formatted_tags)} dynamic tags from top videos!")
-        return formatted_tags[:30] # Feed up to 30 top tags to Gemini
+        return formatted_tags[:30]
     except Exception as e:
         print(f"⚠️ Could not fetch dynamic tags, using fallback. Error: {e}")
         return fallback_tags
@@ -159,11 +155,9 @@ def log_weekly_analytics(credentials):
         print(f"⚠️ Analytics report skipped safely: {e}")
 
 # --- 2. THE AI SCRIPT ENGINE (Trend-Jacked via Google Search) ---
-# Change the definition to include dynamic_tags_list
 def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
-    # Add a fallback if no tags are passed
     if not dynamic_tags_list:
         dynamic_tags_list = ["#Shorts", "#Mystery"]
         
@@ -216,13 +210,8 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    # CHANGE THIS:
-    # for attempt in (3):
-
-    # TO THIS:
     for attempt in range(3):
         try:
-            # Enable Google Search Grounding for live trend-jacking
             response = gemini_client.models.generate_content(
                 model='gemini-2.5-flash', 
                 contents=prompt, 
@@ -298,7 +287,7 @@ def download_ai_visuals(prompts, visual_theme=""):
     print("🎨 Painting Custom AI Visuals...")
     pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
     for index, prompt in enumerate(prompts):
-        full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders"
+        full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
         for attempt in range(4):
             if safe_download(f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}", f"media/clip_{index}.jpg", 20000): break
             else: time.sleep(2)
@@ -325,28 +314,6 @@ def download_sfx():
         except Exception: pass
 
 # --- 4. THE PRO EDITOR ---
-def apply_random_motion(clip, clip_duration, w=1080, h=1920):
-    from PIL import Image, ImageFilter
-    motion = random.choice(['zoom_in', 'zoom_out', 'pan_l', 'pan_r'])
-    pan_scale = 1.10  
-    def transform(get_frame, t):
-        frame = get_frame(t)
-        img = Image.fromarray(frame)
-        progress = min(max(t / clip_duration, 0), 1)
-        if motion in ('zoom_in', 'zoom_out'):
-            cur_scale = (1.0 + 0.1 * progress) if motion == 'zoom_in' else (1.1 - 0.1 * progress)
-            crop_w, crop_h = max(int(w / cur_scale), 2), max(int(h / cur_scale), 2)
-            left, top = (w - crop_w) // 2, (h - crop_h) // 2
-            img = img.crop((left, top, left + crop_w, top + crop_h)).resize((w, h), Image.LANCZOS)
-        else:
-            new_w, new_h = int(w * pan_scale), int(h * pan_scale)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
-            max_shift = new_w - w
-            left = int(max_shift * (1 - progress)) if motion == 'pan_l' else int(max_shift * progress)
-            img = img.crop((left, (new_h - h) // 2, left + w, (new_h - h) // 2 + h))
-        return np.array(img.filter(ImageFilter.GaussianBlur(radius=0.2)))
-    return clip.fl(transform)
-
 def safe_color_grade(get_frame, t):
     frame = get_frame(t).astype(np.float32)
     return np.clip((frame - 127.0) * 1.05 + 127.0 * 1.02, 0, 255).astype('uint8')
@@ -369,7 +336,7 @@ def is_high_impact(word):
     return any(char.isdigit() for char in word) or word.strip(".,!?\"'").upper() in ["MILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY"]
 
 def assemble_video(dynamic_sfx_map):
-    print("\n🎬 Assembling cinematic video...")
+    print("\n🎬 Assembling cinematic video with Internal Procedural AI Motion Engine...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
     
@@ -394,12 +361,23 @@ def assemble_video(dynamic_sfx_map):
     while current_time < voice_audio.duration:
         media_path = media_files[media_index % len(media_files)]
         clip_dur = min(3.0, voice_audio.duration - current_time)
-        clip = ImageClip(media_path).set_duration(clip_dur).resize(height=1920).crop(x_center=1080/2, y_center=1920/2, width=1080, height=1920)
-        clip = apply_random_motion(clip, clip_dur).fl(safe_color_grade).set_start(current_time)
-        if current_time > 0: clip = clip.crossfadein(0.2)
+        
+        # 1. Synthesize dynamic procedural 3D motion & vector warp frame-by-frame
+        warped_clip = ProceduralAIVideoGenerator(media_path, duration=clip_dur, fps=24).to_clip()
+        
+        # 2. Apply AI frame flickering & color grading
+        clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
+        
+        if current_time > 0: 
+            clip = clip.crossfadein(0.2)
         clips.append(clip)
         
-        if has_sfx and current_time > 0: audio_tracks.append(AudioFileClip("whoosh.mp3").set_start(current_time).fx(afx.volumex, 0.3))
+        # 3. Add procedural glitch transitions & sound cues
+        if has_sfx and current_time > 0: 
+            audio_tracks.append(AudioFileClip("whoosh.mp3").set_start(current_time).fx(afx.volumex, 0.3))
+            glitch_transition = AIVideoEngine.generate_procedural_glitch(duration=0.15, fps=24).set_start(current_time - 0.075)
+            clips.append(glitch_transition)
+
         if media_index in dynamic_sfx_map:
             audio_tracks.append(AudioFileClip(dynamic_sfx_map[media_index]).set_start(current_time).fx(afx.volumex, 0.5))
             
@@ -439,7 +417,17 @@ def assemble_video(dynamic_sfx_map):
 
     final_audio = CompositeAudioClip(audio_tracks)
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
-    final.write_videofile("final_short.mp4", fps=24, codec="libx264", audio_codec="aac", threads=4, bitrate="8000k", ffmpeg_params=["-maxrate", "8000k", "-bufsize", "16000k", "-crf", "20"])
+    
+    # Export with ultra-high quality CRF 18 and 12,000k bitrate
+    final.write_videofile(
+        "final_short.mp4", 
+        fps=24, 
+        codec="libx264", 
+        audio_codec="aac", 
+        threads=4, 
+        bitrate="12000k", 
+        ffmpeg_params=["-crf", "18", "-preset", "slow"]
+    )
     final.close()
 
 # --- 5. UPLOAD & SYNDICATION ---
@@ -501,10 +489,10 @@ async def main():
     
     boost_topics = fetch_top_performing_titles(credentials)
     
-    # --> ADD THIS LINE: Fetch tags from your highest reach videos
+    # Fetch tags from your highest reach videos
     viral_tags = fetch_high_reach_tags(credentials)
     
-    # --> UPDATE THIS LINE: Pass the tags into the AI generator
+    # Pass the tags into the AI generator
     content = generate_script(
         avoid_topics=[h["title"] for h in load_topic_history()], 
         boost_topics=boost_topics,
