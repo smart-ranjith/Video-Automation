@@ -404,30 +404,39 @@ def assemble_video(dynamic_sfx_map):
         current_time += clip_dur
         media_index += 1
 
-    chunks, curr_chunk = [], []
-    for w in words:
-        curr_chunk.append(w)
-        if len(curr_chunk) >= 3 or w["text"][-1] in ".,!?":
-            chunks.append(curr_chunk)
-            curr_chunk = []
-    if curr_chunk: chunks.append(curr_chunk)
-
+    # --- KINETIC TYPOGRAPHY ENGINE ---
     text_clips = []
-    for i, chunk in enumerate(chunks):
-        start_t = chunk[0]["start"]
-        end_t = chunks[i+1][0]["start"] if i + 1 < len(chunks) else chunk[-1]["end"] + 0.3
-        clean_text = " ".join([w["text"].strip(".,!?\"'").upper() for w in chunk])
-        impact = any(is_high_impact(w["text"]) for w in chunk)
+    
+    for i, w in enumerate(words):
+        start_t = w["start"]
+        # Extend end time seamlessly to the next word so the screen never flickers blank
+        end_t = words[i+1]["start"] if i + 1 < len(words) else w["end"] + 0.2
         
-        size, fill, depth_col = (110 if len(chunk) > 1 else 130), ((0, 255, 255) if impact else (255, 255, 255)), ((0, 100, 100) if impact else (0, 0, 0))
+        clean_text = w["text"].strip(".,!?\"'").upper()
+        if not clean_text: continue
+            
+        impact = is_high_impact(clean_text)
+        
+        # Word-level visual hierarchy (Bigger and brighter for high-impact words)
+        size = 145 if impact else 120
+        fill = (0, 255, 255) if impact else (255, 255, 255) # Cyan for impact, White for normal
+        depth_col = (0, 100, 100) if impact else (0, 0, 0)
+        
         word_array = render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col)
         
         temp_img_path = f"media/temp_word_{i}.png"
         PIL.Image.fromarray(word_array).save(temp_img_path)
-        txt_active = ImageClip(temp_img_path, has_mask=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         
-        if impact and has_sfx: audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
-        text_clips.append(txt_active)
+        # Center the text directly in the viewer's focal path
+        txt_clip = ImageClip(temp_img_path, has_mask=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
+        
+        # Apply the "Editor's Pop": A mathematically calculated zoom-in effect that snaps into place
+        txt_clip = txt_clip.resize(lambda t: max(1.0, 1.2 - (t * 4))) 
+        
+        if impact and has_sfx: 
+            audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
+            
+        text_clips.append(txt_clip)
 
     retention_bar = ColorClip(size=(1080, 15), color=(255, 255, 0)).set_position(lambda t: (-1080 + int(1080 * (t / voice_audio.duration)), 0)).set_duration(voice_audio.duration)
     
