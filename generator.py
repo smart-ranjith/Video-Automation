@@ -103,6 +103,35 @@ def fetch_top_performing_titles(credentials, max_results=5):
         print(f"⚠️ Notice: YouTube Analytics API not enabled or accessible (skipping boost topics): {e}")
         return []
 
+def fetch_high_reach_tags(credentials):
+    print("🔍 Fetching tags from your highest-reach videos...")
+    # Your proven fallback list in case the API is slow
+    fallback_tags = ["#ScienceMystery", "#SpaceMystery", "#Unexplained", "#ScienceFacts", "#Cosmos", "#EarthMystery", "#UnsolvedMysteries", "#AlienLife", "#Astrophysics", "#CosmicSecrets", "#NatureFacts", "#SpaceShorts", "#Shorts", "#DarkMatter", "#Universe", "#DeepEarth", "#Geology", "#PlanetEarth", "#SETI"]
+    try:
+        youtube = build("youtube", "v3", credentials=credentials)
+        
+        # 1. Search for your top 5 most-viewed videos
+        search_res = youtube.search().list(part="id", forMine=True, type="video", order="viewCount", maxResults=5).execute()
+        video_ids = [item["id"]["videoId"] for item in search_res.get("items", [])]
+        
+        if not video_ids: return fallback_tags
+        
+        # 2. Fetch the actual hidden tags used in those specific videos
+        vid_res = youtube.videos().list(part="snippet", id=",".join(video_ids)).execute()
+        dynamic_tags = []
+        for item in vid_res.get("items", []):
+            dynamic_tags.extend(item["snippet"].get("tags", []))
+        
+        if not dynamic_tags: return fallback_tags
+        
+        # 3. Clean and format the tags (add #, remove spaces, deduplicate)
+        formatted_tags = list(set([f"#{t.replace(' ', '').replace('#', '')}" for t in dynamic_tags]))
+        print(f"✅ Successfully extracted {len(formatted_tags)} dynamic tags from top videos!")
+        return formatted_tags[:30] # Feed up to 30 top tags to Gemini
+    except Exception as e:
+        print(f"⚠️ Could not fetch dynamic tags, using fallback. Error: {e}")
+        return fallback_tags
+
 def log_weekly_analytics(credentials):
     print("📊 Compiling Weekly Channel Performance Report...")
     try:
@@ -130,11 +159,18 @@ def log_weekly_analytics(credentials):
         print(f"⚠️ Analytics report skipped safely: {e}")
 
 # --- 2. THE AI SCRIPT ENGINE (Trend-Jacked via Google Search) ---
-def generate_script(avoid_topics=None, boost_topics=None):
+# Change the definition to include dynamic_tags_list
+def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
+    
+    # Add a fallback if no tags are passed
+    if not dynamic_tags_list:
+        dynamic_tags_list = ["#Shorts", "#Mystery"]
+        
+    tags_string = ", ".join(dynamic_tags_list)
+
     avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
     boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
-
     cliffhanger_block = ""
     if os.path.exists(CLIFFHANGER_FILE):
         with open(CLIFFHANGER_FILE, "r") as f: pending_mystery = f.read()
@@ -178,6 +214,7 @@ def generate_script(avoid_topics=None, boost_topics=None):
         {{"clip_index": 6, "query": "heartbeat"}}
       ]
     }}
+    - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
     # CHANGE THIS:
     # for attempt in (3):
@@ -463,8 +500,16 @@ async def main():
     log_weekly_analytics(credentials)
     
     boost_topics = fetch_top_performing_titles(credentials)
-    content = generate_script(avoid_topics=[h["title"] for h in load_topic_history()], boost_topics=boost_topics)
     
+    # --> ADD THIS LINE: Fetch tags from your highest reach videos
+    viral_tags = fetch_high_reach_tags(credentials)
+    
+    # --> UPDATE THIS LINE: Pass the tags into the AI generator
+    content = generate_script(
+        avoid_topics=[h["title"] for h in load_topic_history()], 
+        boost_topics=boost_topics,
+        dynamic_tags_list=viral_tags
+    )
     await generate_audio_and_timestamps(content["script"])
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
     generate_ai_thumbnail(content.get("thumbnail_text", content.get("title", "")), content.get("visual_theme", ""))
