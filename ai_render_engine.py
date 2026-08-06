@@ -9,7 +9,8 @@ class ProceduralAIVideoGenerator:
         self.image = cv2.imread(image_path)
         if self.image is None:
             raise FileNotFoundError(f"Image at {image_path} could not be loaded.")
-            
+
+        self.image = cv2.resize(self.image, (1080, 1920), interpolation=cv2.INTER_CUBIC) 
         self.h, self.w, _ = self.image.shape
         self.duration = duration
         self.fps = fps
