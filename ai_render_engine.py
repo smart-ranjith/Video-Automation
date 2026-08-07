@@ -33,7 +33,6 @@ class ProceduralAIVideoGenerator:
         scale = 1.0 + (0.08 * progress)
         
         # 2. ALGORITHMIC MICRO-ZOOM (The Editor's Punch)
-        # If this frame happens within 0.3 seconds of an impact word, spike the scale
         for impact_t in self.impact_times:
             if impact_t <= abs_t <= impact_t + 0.3:
                 pop_progress = (abs_t - impact_t) / 0.3
@@ -84,18 +83,11 @@ class AIVideoEngine:
     def generate_procedural_glitch(duration=0.2, fps=30, resolution=(1080, 1920)):
         """Mathematically generates a digital transition using raw NumPy arrays."""
         num_frames = int(duration * fps)
-        # Synthesizes pure RGB static noise frames from thin air
         frames = [
             np.random.randint(0, 255, (resolution[1], resolution[0], 3), dtype=np.uint8) 
             for _ in range(num_frames)
         ]
         return ImageSequenceClip(frames, fps=fps)
-
-    @staticmethod
-    def cinematic_camera_push(img_path, duration):
-        """Simulates an AI-generated 3D camera tracking shot."""
-        clip = ImageClip(img_path).set_duration(duration)
-        return clip.resize(lambda t: 1 + (0.04 * t)).set_position(('center', 'center'))
 
     @staticmethod
     def apply_ai_flicker(clip):
