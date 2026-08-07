@@ -361,6 +361,7 @@ def assemble_video(dynamic_sfx_map):
     audio_tracks = [voice_audio]
     
     with open("words.json", "r") as f: words = json.load(f)
+    
     # Map the exact seconds where a high-impact word is spoken
     impact_timestamps = [w["start"] for w in words if is_high_impact(w["text"].strip(".,!?\"'").upper())]
     
@@ -376,10 +377,6 @@ def assemble_video(dynamic_sfx_map):
     media_files = [os.path.join("media", f) for f in os.listdir("media") if f.endswith(".jpg")]
     media_files.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
     
-    clips = []
-    current_time, media_index = 0, 0
-    has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
-
     # 1. Parse the data structure to find natural sentence boundaries
     sentence_boundaries = []
     for w in words:
@@ -408,11 +405,9 @@ def assemble_video(dynamic_sfx_map):
         # Safety fallback: If a sentence is incredibly long, break it up max every 4 seconds
         if clip_dur > 4.0:
             clip_dur = 4.0
-            # Do NOT increment boundary_index so the next clip continues the same sentence
         else:
             boundary_index += 1
 
-        # 3. Synthesize dynamic procedural 3D motion & vector warp
         # 3. Synthesize dynamic procedural 3D motion with Audio-Reactive Micro-Zooms
         warped_clip = ProceduralAIVideoGenerator(
             media_path, 
@@ -484,6 +479,7 @@ def assemble_video(dynamic_sfx_map):
     final_audio = CompositeAudioClip(audio_tracks)
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
     final = apply_procedural_compositing(final)
+    
     # Export with ultra-high quality CRF 18 and 12,000k bitrate
     final.write_videofile(
         "final_short.mp4", 
