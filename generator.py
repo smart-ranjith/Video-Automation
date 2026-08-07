@@ -378,21 +378,49 @@ def assemble_video(dynamic_sfx_map):
     current_time, media_index = 0, 0
     has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
 
-    while current_time < voice_audio.duration:
+    # 1. Parse the data structure to find natural sentence boundaries
+    sentence_boundaries = []
+    for w in words:
+        if w["text"][-1] in ".,!?":
+            # Add a 0.3s psychological overlap (The J-Cut offset)
+            sentence_boundaries.append(w["end"] + 0.3)
+    
+    # Ensure the final boundary matches the total audio length
+    if not sentence_boundaries or sentence_boundaries[-1] < voice_audio.duration:
+        sentence_boundaries.append(voice_audio.duration)
+
+    clips = []
+    current_time = 0
+    media_index = 0
+    boundary_index = 0
+    has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
+
+    # 2. Loop through the calculated boundaries instead of rigid 3-second blocks
+    while current_time < voice_audio.duration and boundary_index < len(sentence_boundaries):
         media_path = media_files[media_index % len(media_files)]
-        clip_dur = min(3.0, voice_audio.duration - current_time)
         
-        # 1. Synthesize dynamic procedural 3D motion & vector warp frame-by-frame
+        # Calculate dynamic duration based on the next sentence end
+        target_end = min(sentence_boundaries[boundary_index], voice_audio.duration)
+        clip_dur = target_end - current_time
+        
+        # Safety fallback: If a sentence is incredibly long, break it up max every 4 seconds
+        if clip_dur > 4.0:
+            clip_dur = 4.0
+            # Do NOT increment boundary_index so the next clip continues the same sentence
+        else:
+            boundary_index += 1
+
+        # 3. Synthesize dynamic procedural 3D motion & vector warp
         warped_clip = ProceduralAIVideoGenerator(media_path, duration=clip_dur, fps=24).to_clip()
         
-        # 2. Apply AI frame flickering & color grading
+        # 4. Apply AI frame flickering & color grading
         clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
         
         if current_time > 0: 
-            clip = clip.crossfadein(0.2)
+            clip = clip.crossfadein(0.25) # Smooth visual blend to complement the audio overlap
         clips.append(clip)
         
-        # 3. Add procedural glitch transitions & sound cues
+        # 5. Add procedural glitch transitions & sound cues on the cuts
         if has_sfx and current_time > 0: 
             audio_tracks.append(AudioFileClip("whoosh.mp3").set_start(current_time).fx(afx.volumex, 0.3))
             glitch_transition = AIVideoEngine.generate_procedural_glitch(duration=0.15, fps=24).set_start(current_time - 0.075)
