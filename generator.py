@@ -361,6 +361,8 @@ def assemble_video(dynamic_sfx_map):
     audio_tracks = [voice_audio]
     
     with open("words.json", "r") as f: words = json.load(f)
+    # Map the exact seconds where a high-impact word is spoken
+    impact_timestamps = [w["start"] for w in words if is_high_impact(w["text"].strip(".,!?\"'").upper())]
     
     if os.path.exists("background_music.mp3"):
         def filter_audio(get_frame, t):
@@ -411,7 +413,14 @@ def assemble_video(dynamic_sfx_map):
             boundary_index += 1
 
         # 3. Synthesize dynamic procedural 3D motion & vector warp
-        warped_clip = ProceduralAIVideoGenerator(media_path, duration=clip_dur, fps=24).to_clip()
+        # 3. Synthesize dynamic procedural 3D motion with Audio-Reactive Micro-Zooms
+        warped_clip = ProceduralAIVideoGenerator(
+            media_path, 
+            duration=clip_dur, 
+            fps=24, 
+            start_time=current_time, 
+            impact_times=impact_timestamps
+        ).to_clip()
         
         # 4. Apply AI frame flickering & color grading
         clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
