@@ -292,14 +292,32 @@ def download_ai_visuals(prompts, visual_theme=""):
             if safe_download(f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}", f"media/clip_{index}.jpg", 20000): break
             else: time.sleep(2)
 
-def generate_ai_thumbnail(title, visual_theme="", out_path="thumbnail.jpg"):
-    print("🖼️ Painting Custom AI Thumbnail...")
+def generate_ai_thumbnail(title, text_hook="", visual_theme="", out_path="thumbnail.jpg"):
+    print("🖼️ Painting Custom High-CTR AI Thumbnail...")
     try:
         pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
-        prompt = f"A dramatic, high-contrast YouTube thumbnail for: {title}. Theme: {visual_theme}. Bold saturated colors, strong focal point, no text, no borders."
+        prompt = f"Dramatic high-contrast cinema shot for {title}, {visual_theme}, vibrant saturated colors, central composition, 8k"
         url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}"
-        safe_download(url, out_path, min_bytes=20000)
-    except Exception as e: print(f"⚠️ Thumbnail generation failed: {e}")
+        
+        if safe_download(url, out_path, min_bytes=20000):
+            # Overlay bold 3D text onto the thumbnail image
+            if text_hook:
+                base_img = PIL.Image.open(out_path).convert("RGBA")
+                
+                # Render bold 3D text clip
+                clean_hook = text_hook.upper()[:25] # Keep thumbnail hook punchy
+                txt_array = render_3d_word(clean_hook, fontsize=110, fill=(255, 220, 0), depth=12, depth_color=(0, 0, 0))
+                txt_img = PIL.Image.fromarray(txt_array)
+                
+                # Center text on top 1/3 of thumbnail layout
+                pos_x = (base_img.width - txt_img.width) // 2
+                pos_y = (base_img.height // 3) - (txt_img.height // 2)
+                
+                base_img.paste(txt_img, (max(0, pos_x), max(0, pos_y)), txt_img)
+                base_img.convert("RGB").save(out_path, quality=95)
+                print("✅ Bold text hook composited onto thumbnail!")
+    except Exception as e: 
+        print(f"⚠️ Thumbnail generation failed: {e}")
 
 def download_sfx():
     audio_api = base64.b64decode("aHR0cHM6Ly9waXhhYmF5LmNvbS9hcGkvYXVkaW8v").decode("utf-8")
@@ -512,6 +530,14 @@ def upload_to_youtube(video_file, data, credentials):
     body = {"snippet": {"categoryId": "28", "title": data["title"], "description": f"{data['description']}\n\n👇 Gear up:\n{affiliate_link}\n\n{hashtags}", "tags": data["tags"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
     video_id = youtube.videos().insert(part="snippet,status", body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
     print(f"✅ Success! YouTube Link: [https://youtu.be/](https://youtu.be/){video_id}")
+    
+    # Force direct thumbnail upload via API
+    if os.path.exists("thumbnail.jpg"):
+        try:
+            youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload("thumbnail.jpg")).execute()
+            print("🖼️ Custom high-CTR thumbnail successfully pushed to YouTube!")
+        except Exception as e:
+            print(f"⚠️ Notice: Direct thumbnail API upload skipped: {e}")
     return video_id, affiliate_link
 
 def post_auto_comment(video_id, script_text, affiliate_link, credentials):
@@ -526,20 +552,51 @@ def post_auto_comment(video_id, script_text, affiliate_link, credentials):
         except Exception: time.sleep(5)
 
 def repost_via_zernio(video_file, data):
+    print("\n🚀 Preparing Zernio Multi-Platform Syndication...")
     api_key = os.environ.get("ZERNIO_API_KEY")
-    if not api_key: return False
+    if not api_key:
+        print("⚠️ ZERNIO_API_KEY environment variable is missing. Skipping cross-posting.")
+        return False
+        
     url = get_public_url(video_file)
-    if not url: return False
+    if not url:
+        print("⚠️ Could not generate public media URL via PixelDrain. Skipping Zernio.")
+        return False
     
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
-        acc_r = requests.get(base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8"), headers=headers, timeout=30)
-        platform_entries = [{"platform": acc["platform"], "accountId": acc.get("_id") or acc.get("id")} for acc in acc_r.json().get("accounts", []) if acc.get("platform") in ("instagram", "facebook", "tiktok")]
-        if not platform_entries: return False
+        acc_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8")
+        acc_r = requests.get(acc_url, headers=headers, timeout=30)
+        
+        if acc_r.status_code != 200:
+            print(f"⚠️ ZERNIO API Error ({acc_r.status_code}): {acc_r.text}")
+            return False
 
-        r = requests.post(base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8"), headers=headers, json={"content": f"{data.get('title', '')}\n\n{data.get('description', '')}"[:2200], "mediaItems": [{"type": "video", "url": url}], "platforms": platform_entries, "publishNow": True}, timeout=120)
-        if r.status_code in (200, 201, 202, 207): print("🚀 Zernio cross-posting triggered!")
-    except Exception: pass
+        accounts = acc_r.json().get("accounts", [])
+        platform_entries = [{"platform": acc["platform"], "accountId": acc.get("_id") or acc.get("id")} 
+                            for acc in accounts if acc.get("platform") in ("instagram", "facebook", "tiktok")]
+        
+        if not platform_entries:
+            print("⚠️ No connected Instagram/TikTok/Facebook accounts found in Zernio dashboard.")
+            return False
+
+        post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
+        payload = {
+            "content": f"{data.get('title', '')}\n\n{data.get('description', '')}"[:2200],
+            "mediaItems": [{"type": "video", "url": url}],
+            "platforms": platform_entries,
+            "publishNow": True
+        }
+        
+        r = requests.post(post_url, headers=headers, json=payload, timeout=120)
+        if r.status_code in (200, 201, 202, 207):
+            print("✅ Zernio cross-posting triggered successfully for Instagram/TikTok!")
+            return True
+        else:
+            print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+    except Exception as e:
+        print(f"⚠️ Zernio Syndication Exception: {e}")
+    return False
 
 async def main():
     if not os.path.exists("media"): os.makedirs("media")
@@ -562,7 +619,14 @@ async def main():
     )
     await generate_audio_and_timestamps(content["script"])
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
-    generate_ai_thumbnail(content.get("thumbnail_text", content.get("title", "")), content.get("visual_theme", ""))
+    
+    # Corrected High-CTR Thumbnail generation (runs BEFORE video assembly and YouTube upload)
+    generate_ai_thumbnail(
+        title=content.get("title", ""), 
+        text_hook=content.get("thumbnail_text", content.get("title", "")), 
+        visual_theme=content.get("visual_theme", "")
+    )
+    
     download_sfx()
     dynamic_sfx_map = download_dynamic_sfx(content.get("sfx_cues", []))
     save_community_post(content)
