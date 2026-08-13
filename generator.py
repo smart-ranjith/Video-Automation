@@ -513,33 +513,48 @@ def assemble_video(dynamic_sfx_map):
 # --- 5. UPLOAD & SYNDICATION ---
 def get_public_url(video_file):
     print("☁️ Uploading media for Zernio syndication...")
-    
-    # Attempt 1: PixelDrain
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"}
+
+    # Attempt 1: tmpfiles.org (Highly friendly to GitHub Actions servers)
+    try:
+        print("   -> Trying tmpfiles.org...")
+        with open(video_file, "rb") as f:
+            r = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=180)
+            if r.status_code == 200 and r.json().get("data"):
+                # Convert the page URL into a direct MP4 download link
+                page_url = r.json()["data"]["url"]
+                direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                print("   ✅ tmpfiles.org upload successful!")
+                return direct_url
+            else:
+                print(f"   ⚠️ tmpfiles.org rejected the file: {r.text}")
+    except Exception as e:
+        print(f"   ⚠️ tmpfiles.org connection error: {e}")
+
+    # Attempt 2: file.io (One-time download link, perfect for Zernio)
+    try:
+        print("   -> Trying file.io...")
+        with open(video_file, "rb") as f:
+            r = requests.post("https://file.io", files={"file": f}, timeout=180)
+            if r.status_code == 200 and r.json().get("success"):
+                print("   ✅ file.io upload successful!")
+                return r.json()["link"]
+            else:
+                print(f"   ⚠️ file.io rejected the file: {r.text}")
+    except Exception as e:
+        print(f"   ⚠️ file.io connection error: {e}")
+
+    # Attempt 3: PixelDrain (With browser-spoofing headers)
     try:
         print("   -> Trying PixelDrain...")
         with open(video_file, "rb") as f:
             upload_api = base64.b64decode("aHR0cHM6Ly9waXhlbGRyYWluLmNvbS9hcGkvZmlsZQ==").decode("utf-8")
-            r = requests.post(upload_api, files={"file": f}, timeout=180)
+            r = requests.post(upload_api, headers=headers, files={"file": f}, timeout=180)
             if r.status_code in (200, 201) and r.json().get("id"): 
                 print("   ✅ PixelDrain upload successful!")
                 return f"https://pixeldrain.com/api/file/{r.json().get('id')}"
-            else:
-                print(f"   ⚠️ PixelDrain rejected the file (Status {r.status_code}): {r.text}")
     except Exception as e: 
         print(f"   ⚠️ PixelDrain connection error: {e}")
-
-    # Attempt 2: Fallback to Catbox.moe
-    try:
-        print("   -> Trying Fallback Server (Catbox)...")
-        with open(video_file, "rb") as f:
-            r = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": f}, timeout=180)
-            if r.status_code == 200 and r.text.startswith("http"):
-                print("   ✅ Catbox upload successful!")
-                return r.text.strip()
-            else:
-                print(f"   ⚠️ Catbox rejected the file (Status {r.status_code}).")
-    except Exception as e:
-        print(f"   ⚠️ Catbox connection error: {e}")
         
     return None
 
