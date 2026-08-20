@@ -514,48 +514,42 @@ def assemble_video(dynamic_sfx_map):
 def get_public_url(video_file):
     print("☁️ Uploading heavy-duty media for Zernio syndication...")
     
-    # Attempt 1: pomf.lain.la (512MB limit, very reliable direct links)
+    # Attempt 1: Filebin (Highly reliable, up to 250MB, direct links)
     try:
-        print("   -> Trying Pomf...")
+        print("   -> Trying Filebin...")
+        import string, random
+        # Generate a random temporary bin
+        bin_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+        filename = os.path.basename(video_file)
+        url = f"https://filebin.net/{bin_id}/{filename}"
+        
         with open(video_file, "rb") as f:
-            r = requests.post("https://pomf.lain.la/upload.php", files={"files[]": f}, timeout=180)
-            if r.status_code == 200 and r.json().get("success"):
-                direct_url = r.json()["files"][0]["url"]
-                print(f"   ✅ Pomf upload successful!")
-                return direct_url
+            headers = {"Content-Type": "video/mp4", "accept": "application/json"}
+            r = requests.post(url, data=f, headers=headers, timeout=180)
+            if r.status_code in (200, 201):
+                print("   ✅ Filebin upload successful!")
+                return url
             else:
-                print(f"   ⚠️ Pomf rejected the file: {r.text}")
+                print(f"   ⚠️ Filebin rejected the file: Status {r.status_code}")
     except Exception as e:
-        print(f"   ⚠️ Pomf connection error: {e}")
+        print(f"   ⚠️ Filebin connection error: {e}")
 
-    # Attempt 2: transfer.sh (Massive limits, built for cloud terminals)
-    try:
-        print("   -> Trying transfer.sh...")
-        with open(video_file, "rb") as f:
-            r = requests.put(f"https://transfer.sh/{os.path.basename(video_file)}", data=f, timeout=180)
-            if r.status_code == 200 and r.text.startswith("http"):
-                # Force a direct download link format for Zernio
-                direct_url = r.text.strip().replace("transfer.sh/", "transfer.sh/get/")
-                print(f"   ✅ transfer.sh upload successful!")
-                return direct_url
-            else:
-                print(f"   ⚠️ transfer.sh rejected the file.")
-    except Exception as e:
-        print(f"   ⚠️ transfer.sh connection error: {e}")
-
-    # Attempt 3: uguu.se (128MB limit)
+    # Attempt 2: Uguu.se (128MB limit fallback)
     try:
         print("   -> Trying Uguu.se...")
         with open(video_file, "rb") as f:
             r = requests.post("https://uguu.se/upload", files={"files[]": f}, timeout=180)
             if r.status_code == 200 and r.json().get("success"):
                 direct_url = r.json()["files"][0]["url"]
-                print(f"   ✅ Uguu upload successful!")
+                print("   ✅ Uguu upload successful!")
                 return direct_url
+            else:
+                print(f"   ⚠️ Uguu rejected the file: {r.text}")
     except Exception as e:
         print(f"   ⚠️ Uguu connection error: {e}")
 
-    return Nones
+    # The typo has been fixed! (Changed 'Nones' to 'None')
+    return None
 
 def upload_to_youtube(video_file, data, credentials):
     youtube = build("youtube", "v3", credentials=credentials)
