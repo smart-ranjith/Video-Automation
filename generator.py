@@ -154,8 +154,63 @@ def log_weekly_analytics(credentials):
     except Exception as e:
         print(f"⚠️ Analytics report skipped safely: {e}")
 
-# --- 2. THE AI SCRIPT ENGINE (Trend-Jacked via Google Search) ---
-def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None):
+def parse_iso8601_duration(duration_str):
+    """Parses YouTube's ISO8601 video duration format (e.g. 'PT27S', 'PT1M5S') into seconds."""
+    import re
+    m = re.match(r"PT(?:(\d+)M)?(?:(\d+)S)?", duration_str or "")
+    if not m:
+        return 0
+    minutes = int(m.group(1) or 0)
+    seconds = int(m.group(2) or 0)
+    return minutes * 60 + seconds
+
+def fetch_retention_dropoff(credentials):
+    """Finds the EXACT second viewers bail on your most recent video, using
+    audienceWatchRatio (second-by-second retention curve) rather than just
+    aggregate view counts. Far more actionable than 'this topic performed well' -
+    tells the script generator exactly where pacing needs to tighten."""
+    try:
+        youtube = build("youtube", "v3", credentials=credentials)
+        analytics = build("youtubeAnalytics", "v2", credentials=credentials)
+
+        search_res = youtube.search().list(part="id", forMine=True, type="video", order="date", maxResults=1).execute()
+        items = search_res.get("items", [])
+        if not items:
+            return None
+        video_id = items[0]["id"]["videoId"]
+
+        vid_res = youtube.videos().list(part="contentDetails", id=video_id).execute()
+        vid_items = vid_res.get("items", [])
+        if not vid_items:
+            return None
+        duration_sec = parse_iso8601_duration(vid_items[0]["contentDetails"]["duration"])
+        if duration_sec <= 0:
+            return None
+
+        end = time.strftime("%Y-%m-%d")
+        start = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
+        report = analytics.reports().query(
+            ids="channel==MINE", startDate=start, endDate=end,
+            metrics="audienceWatchRatio", dimensions="elapsedVideoTimeRatio",
+            filters=f"video=={video_id}", sort="elapsedVideoTimeRatio"
+        ).execute()
+        rows = report.get("rows", [])
+        if not rows:
+            return None
+
+        # Find the first point where retention drops below 50% - that's the real bail-out moment
+        for elapsed_ratio, watch_ratio in rows:
+            if float(watch_ratio) < 0.5:
+                dropoff_second = round(float(elapsed_ratio) * duration_sec)
+                print(f"📉 Retention analysis: previous video lost half its audience by ~{dropoff_second}s.")
+                return dropoff_second
+        return None  # never dropped below 50% - good retention, nothing to flag
+    except Exception as e:
+        print(f"⚠️ Retention drop-off analysis skipped: {e}")
+        return None
+
+
+def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
     if not dynamic_tags_list:
@@ -165,6 +220,11 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
 
     avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
     boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
+    retention_block = ""
+    if retention_dropoff_sec:
+        retention_block = (f"\n    CRITICAL PACING FIX: your last video lost half its audience by second "
+                            f"{retention_dropoff_sec}. Make sure THIS script's pacing stays punchy and escalating "
+                            f"through at least that point - no slow/explanatory sentences before then.\n")
     cliffhanger_block = ""
     if os.path.exists(CLIFFHANGER_FILE):
         with open(CLIFFHANGER_FILE, "r") as f: pending_mystery = f.read()
@@ -174,7 +234,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     prompt = f"""
     Search the web for current viral mystery trends, unsolved phenomena, or fascinating historical oddities trending right now.
     Write an optimized 20-25 second YouTube Shorts script in English based on a fresh trending concept. No filler.
-    {avoid_block}{boost_block}{cliffhanger_block}
+    {avoid_block}{boost_block}{retention_block}{cliffhanger_block}
     
     Structure Rules:
     1. HOOK (First 3 seconds): Visually and verbally shocking. No "Did you know".
@@ -373,6 +433,29 @@ def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color
 def is_high_impact(word):
     return any(char.isdigit() for char in word) or word.strip(".,!?\"'").upper() in ["MILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY"]
 
+def get_watermark_clip(duration, w=1080, h=1920):
+    """Small persistent channel watermark, bottom-right corner - gives a
+    recognizable cross-video branding thread. Skipped entirely if
+    CHANNEL_WATERMARK_TEXT isn't set, rather than showing a generic placeholder."""
+    text = os.environ.get("CHANNEL_WATERMARK_TEXT")
+    if not text:
+        return None
+    from PIL import Image, ImageDraw, ImageFont
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
+    except Exception:
+        font = ImageFont.load_default()
+    tmp = Image.new("RGBA", (10, 10))
+    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    pad = 16
+    img = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((pad, pad), text, font=font, fill=(255, 255, 255, 160))  # semi-transparent, unobtrusive
+    arr = np.array(img)
+    clip = ImageClip(arr).set_duration(duration)
+    return clip.set_position((w - arr.shape[1] - 24, h - arr.shape[0] - 140))  # above the retention bar area
+
 def assemble_video(dynamic_sfx_map):
     print("\n🎬 Assembling cinematic video with Internal Procedural AI Motion Engine...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
@@ -495,7 +578,11 @@ def assemble_video(dynamic_sfx_map):
         text_clips.insert(0, thumb_clip.set_start(0))
 
     final_audio = CompositeAudioClip(audio_tracks)
-    final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + [retention_bar], size=(1080, 1920))
+    extra_layers = [retention_bar]
+    watermark = get_watermark_clip(voice_audio.duration)
+    if watermark:
+        extra_layers.append(watermark)
+    final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + extra_layers, size=(1080, 1920))
     final = apply_procedural_compositing(final)
     
     # Export with ultra-high quality CRF 18 and 12,000k bitrate
@@ -555,11 +642,22 @@ def upload_to_youtube(video_file, data, credentials):
     youtube = build("youtube", "v3", credentials=credentials)
     hashtags = " ".join(f"#{tag.replace(' ', '').replace('#', '')}" for tag in data.get("tags", [])[:8])
     keyword = urllib.parse.quote(data.get("affiliate_keyword", "mystery books"))
-    affiliate_link = f"[https://www.amazon.com/s?k=](https://www.amazon.com/s?k=){keyword}&tag=YOUR_AMAZON_TAG_HERE"
-    
-    body = {"snippet": {"categoryId": "28", "title": data["title"], "description": f"{data['description']}\n\n👇 Gear up:\n{affiliate_link}\n\n{hashtags}", "tags": data["tags"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+
+    # Real Amazon Associates tag required - set AMAZON_AFFILIATE_TAG env var once you
+    # have one. Without it, the link is skipped entirely rather than shipping a
+    # broken placeholder ("YOUR_AMAZON_TAG_HERE") to every viewer, and the previous
+    # markdown-bracket format was never going to render as a link on YouTube anyway
+    # (YouTube descriptions are plain text, not markdown).
+    amazon_tag = os.environ.get("AMAZON_AFFILIATE_TAG")
+    affiliate_block = ""
+    affiliate_link = ""
+    if amazon_tag:
+        affiliate_link = f"https://www.amazon.com/s?k={keyword}&tag={amazon_tag}"
+        affiliate_block = f"\n\n👇 Gear up:\n{affiliate_link}"
+
+    body = {"snippet": {"categoryId": "28", "title": data["title"], "description": f"{data['description']}{affiliate_block}\n\n{hashtags}", "tags": data["tags"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
     video_id = youtube.videos().insert(part="snippet,status", body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
-    print(f"✅ Success! YouTube Link: [https://youtu.be/](https://youtu.be/){video_id}")
+    print(f"✅ Success! YouTube Link: https://youtu.be/{video_id}")
     
     # Force direct thumbnail upload via API
     if os.path.exists("thumbnail.jpg"):
@@ -573,10 +671,11 @@ def upload_to_youtube(video_file, data, credentials):
 def post_auto_comment(video_id, script_text, affiliate_link, credentials):
     print("💬 Posting monetized auto-comment...")
     youtube = build("youtube", "v3", credentials=credentials)
+    support_line = f"\n\n🔍 Support the channel: {affiliate_link}" if affiliate_link else ""
     for attempt in range(3):
         try:
             comment_text = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
-            youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}\n\n🔍 Support the channel: {affiliate_link}"}}}}).execute()
+            youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}}).execute()
             print(f"✅ Monetized auto-comment posted!")
             return
         except Exception: time.sleep(5)
@@ -590,7 +689,7 @@ def repost_via_zernio(video_file, data):
         
     url = get_public_url(video_file)
     if not url:
-        print("⚠️ Could not generate public media URL via PixelDrain. Skipping Zernio.")
+        print("⚠️ Could not generate public media URL via Filebin/Uguu. Skipping Zernio.")
         return False
     
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -628,6 +727,71 @@ def repost_via_zernio(video_file, data):
         print(f"⚠️ Zernio Syndication Exception: {e}")
     return False
 
+def add_video_to_themed_playlist(youtube, video_id, visual_theme):
+    """Groups videos into themed playlists (e.g. 'Space Mysteries'). Playlists
+    drive session watch time via autoplay-into-next-video - a heavy YouTube
+    ranking signal we weren't using before."""
+    if not visual_theme:
+        return
+    playlist_title = f"{visual_theme.title()} Mysteries"
+    try:
+        existing = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute()
+        match = next((p for p in existing.get("items", [])
+                      if p["snippet"]["title"].lower() == playlist_title.lower()), None)
+
+        if match:
+            playlist_id = match["id"]
+        else:
+            created = youtube.playlists().insert(part="snippet,status", body={
+                "snippet": {"title": playlist_title, "description": f"Auto-generated collection of {visual_theme} content."},
+                "status": {"privacyStatus": "public"},
+            }).execute()
+            playlist_id = created["id"]
+            print(f"📁 Created new playlist: {playlist_title}")
+
+        youtube.playlistItems().insert(part="snippet", body={
+            "snippet": {"playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}
+        }).execute()
+        print(f"✅ Added video to playlist: {playlist_title}")
+    except Exception as e:
+        print(f"⚠️ Playlist grouping skipped: {e}")
+
+def reply_to_top_comments(credentials, max_replies=3):
+    """Auto-replies to top comments on your MOST RECENT PAST video (not the one
+    just uploaded, which has zero comments yet) - light engagement signal, and
+    the algorithm does notice reply rate on a channel."""
+    try:
+        youtube = build("youtube", "v3", credentials=credentials)
+        search_res = youtube.search().list(part="id", forMine=True, type="video", order="date", maxResults=1).execute()
+        items = search_res.get("items", [])
+        if not items:
+            return
+        video_id = items[0]["id"]["videoId"]
+
+        comments_res = youtube.commentThreads().list(
+            part="snippet", videoId=video_id, order="relevance", maxResults=max_replies, textFormat="plainText"
+        ).execute()
+
+        for thread in comments_res.get("items", []):
+            top_comment = thread["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+            thread_id = thread["id"]
+            # Skip if it already has replies (avoid double-replying on repeat runs)
+            if thread["snippet"].get("totalReplyCount", 0) > 0:
+                continue
+            try:
+                reply_text = gemini_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=f"Write ONE short, warm, engaging reply (under 15 words) to this YouTube comment: \"{top_comment}\""
+                ).text.strip().strip('"')
+                youtube.comments().insert(part="snippet", body={
+                    "snippet": {"parentId": thread_id, "textOriginal": reply_text}
+                }).execute()
+                print(f"💬 Replied to a comment: {reply_text}")
+            except Exception as e:
+                print(f"⚠️ Reply skipped for one comment: {e}")
+    except Exception as e:
+        print(f"⚠️ Comment engagement skipped: {e}")
+
 async def main():
     if not os.path.exists("media"): os.makedirs("media")
     restore_google_secrets()
@@ -635,9 +799,13 @@ async def main():
     
     # Run the Weekly Analytics Telemetry Logger
     log_weekly_analytics(credentials)
-    
+
+    # Engage with existing audience on the previous video before making a new one
+    reply_to_top_comments(credentials)
+
     boost_topics = fetch_top_performing_titles(credentials)
-    
+    retention_dropoff_sec = fetch_retention_dropoff(credentials)
+
     # Fetch tags from your highest reach videos
     viral_tags = fetch_high_reach_tags(credentials)
     
@@ -645,7 +813,8 @@ async def main():
     content = generate_script(
         avoid_topics=[h["title"] for h in load_topic_history()], 
         boost_topics=boost_topics,
-        dynamic_tags_list=viral_tags
+        dynamic_tags_list=viral_tags,
+        retention_dropoff_sec=retention_dropoff_sec
     )
     await generate_audio_and_timestamps(content["script"])
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
@@ -667,6 +836,8 @@ async def main():
     if vid_id:
         post_auto_comment(vid_id, content["script"], aff_link, credentials)
         save_topic_history({"title": content["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d")})
+        youtube_client = build("youtube", "v3", credentials=credentials)
+        add_video_to_themed_playlist(youtube_client, vid_id, content.get("visual_theme", ""))
     repost_via_zernio("final_short.mp4", content)
 
 if __name__ == "__main__":
