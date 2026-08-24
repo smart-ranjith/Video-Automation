@@ -716,45 +716,78 @@ def repost_via_zernio(video_file, data):
             "platforms": platform_entries,
             "publishNow": True
         }
-        
-        r = requests.post(post_url, headers=headers, json=payload, timeout=120)
-        if r.status_code in (200, 201, 202, 207):
-            print("✅ Zernio cross-posting triggered successfully for Instagram/TikTok!")
-            return True
-        else:
-            print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+
+        try:
+            # 300s (was 120s) - Zernio may be transcoding/processing the video
+            # server-side before it can respond, which can genuinely take a while.
+            # NOTE: deliberately not auto-retrying on timeout - if the first request
+            # actually succeeded server-side and we just didn't get the response in
+            # time, blindly resubmitting could create a duplicate live post on
+            # Instagram/Facebook. Safer to report it and let you check manually.
+            r = requests.post(post_url, headers=headers, json=payload, timeout=300)
+            if r.status_code in (200, 201, 202, 207):
+                print("✅ Zernio cross-posting triggered successfully for Instagram/TikTok!")
+                return True
+            else:
+                print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+        except requests.exceptions.Timeout:
+            print("⚠️ Zernio post timed out after 300s with no response. The media upload already "
+                  "succeeded, so this request likely reached Zernio's servers even though we never "
+                  "got a reply - check zernio.com/dashboard to see if it actually posted before "
+                  "manually retrying, to avoid double-posting.")
     except Exception as e:
         print(f"⚠️ Zernio Syndication Exception: {e}")
     return False
 
-def add_video_to_themed_playlist(youtube, video_id, visual_theme):
+def sanitize_theme_label(visual_theme, max_words=3, max_chars=40):
+    """Gemini sometimes returns visual_theme as a full descriptive sentence
+    instead of a short label (e.g. 'Dark, Unsettling Historical Reenactment
+    With Abstract Elements...') - that breaks playlist titles. Take just the
+    first few words and hard-cap length so it stays usable as a title."""
+    import re
+    cleaned = re.sub(r"[^\w\s]", "", visual_theme or "").strip()
+    words = cleaned.split()[:max_words]
+    label = " ".join(words)[:max_chars].strip()
+    return label
+
+def add_video_to_themed_playlist(youtube, video_id, visual_theme, max_retries=3):
     """Groups videos into themed playlists (e.g. 'Space Mysteries'). Playlists
     drive session watch time via autoplay-into-next-video - a heavy YouTube
     ranking signal we weren't using before."""
-    if not visual_theme:
+    theme_label = sanitize_theme_label(visual_theme)
+    if not theme_label:
         return
-    playlist_title = f"{visual_theme.title()} Mysteries"
-    try:
-        existing = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute()
-        match = next((p for p in existing.get("items", [])
-                      if p["snippet"]["title"].lower() == playlist_title.lower()), None)
+    playlist_title = f"{theme_label.title()} Mysteries"
 
-        if match:
-            playlist_id = match["id"]
-        else:
-            created = youtube.playlists().insert(part="snippet,status", body={
-                "snippet": {"title": playlist_title, "description": f"Auto-generated collection of {visual_theme} content."},
-                "status": {"privacyStatus": "public"},
+    for attempt in range(max_retries):
+        try:
+            existing = youtube.playlists().list(part="snippet", mine=True, maxResults=50).execute()
+            match = next((p for p in existing.get("items", [])
+                          if p["snippet"]["title"].lower() == playlist_title.lower()), None)
+
+            if match:
+                playlist_id = match["id"]
+            else:
+                created = youtube.playlists().insert(part="snippet,status", body={
+                    "snippet": {"title": playlist_title, "description": f"Auto-generated collection of {theme_label} content."},
+                    "status": {"privacyStatus": "public"},
+                }).execute()
+                playlist_id = created["id"]
+                print(f"📁 Created new playlist: {playlist_title}")
+
+            youtube.playlistItems().insert(part="snippet", body={
+                "snippet": {"playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}
             }).execute()
-            playlist_id = created["id"]
-            print(f"📁 Created new playlist: {playlist_title}")
-
-        youtube.playlistItems().insert(part="snippet", body={
-            "snippet": {"playlistId": playlist_id, "resourceId": {"kind": "youtube#video", "videoId": video_id}}
-        }).execute()
-        print(f"✅ Added video to playlist: {playlist_title}")
-    except Exception as e:
-        print(f"⚠️ Playlist grouping skipped: {e}")
+            print(f"✅ Added video to playlist: {playlist_title}")
+            return
+        except Exception as e:
+            # YouTube's API occasionally throws transient 409/503 errors - worth a retry
+            # before giving up, rather than failing on the first hiccup.
+            if attempt < max_retries - 1:
+                print(f"⚠️ Playlist attempt {attempt + 1} failed, retrying: {e}")
+                time.sleep(5 * (attempt + 1))
+            else:
+                print(f"⚠️ Playlist grouping skipped after {max_retries} attempts: {e}")
 
 def reply_to_top_comments(credentials, max_replies=3):
     """Auto-replies to top comments on your MOST RECENT PAST video (not the one
