@@ -5,6 +5,9 @@ on:
     - cron: '0 3 * * *' # Runs automatically every day at 3:00 AM UTC
   workflow_dispatch: # Allows manual triggers anytime
 
+permissions:
+  contents: write   # needed so the workflow can commit topic_history.json etc back to the repo
+
 jobs:
   run-factory:
     runs-on: ubuntu-latest
@@ -29,4 +32,16 @@ jobs:
           CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TOKEN_PICKLE_BASE64: ${{ secrets.TOKEN_PICKLE_BASE64 }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+          AMAZON_AFFILIATE_TAG: ${{ secrets.AMAZON_AFFILIATE_TAG }}
+          CHANNEL_WATERMARK_TEXT: ${{ secrets.CHANNEL_WATERMARK_TEXT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python generator.py
+
+      - name: Commit updated state files back to repo
+        if: always()   # run even if the generator step above failed partway - save whatever state exists
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add topic_history.json cliffhanger.json performance_report.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "Update pipeline state files [skip ci]"
+          git push || echo "Nothing to push"
