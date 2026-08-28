@@ -279,7 +279,19 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                     tools=[types.Tool(google_search=types.GoogleSearch())]
                 )
             )
-            raw_text = response.text.strip()
+            # response.text is a convenience shortcut that can return None when
+            # Google Search grounding produces a multi-part response (grounding
+            # metadata mixed with text) rather than one simple text block - that
+            # was crashing here with a cryptic 'NoneType has no attribute strip'.
+            # Fall back to manually walking the response parts if the shortcut fails.
+            raw_text = response.text
+            if raw_text is None:
+                parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
+                raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
+            if not raw_text:
+                raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+
+            raw_text = raw_text.strip()
             if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
             data = json.loads(raw_text)
             if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
