@@ -1,7 +1,11 @@
 import pickle
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+]
 
 # Ask for the exact path using drag-and-drop
 secret_file = input("Drag and drop your Google secret JSON file here and press Enter: ").strip().strip('"').strip("'")
