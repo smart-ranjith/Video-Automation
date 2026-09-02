@@ -730,18 +730,60 @@ def repost_via_zernio(video_file, data):
         }
 
         try:
-            # 300s (was 120s) - Zernio may be transcoding/processing the video
-            # server-side before it can respond, which can genuinely take a while.
-            # NOTE: deliberately not auto-retrying on timeout - if the first request
-            # actually succeeded server-side and we just didn't get the response in
-            # time, blindly resubmitting could create a duplicate live post on
-            # Instagram/Facebook. Safer to report it and let you check manually.
+            # Zernio processes posts asynchronously - status moves through
+            # scheduled -> publishing -> published (or failed/partial). The
+            # CREATION response below only confirms Zernio accepted the request,
+            # NOT that it actually went live - that was the bug: this used to be
+            # treated as final success, but the real status arrives later. Must
+            # poll GET /v1/posts/{postId} until it reaches a terminal state.
             r = requests.post(post_url, headers=headers, json=payload, timeout=300)
-            if r.status_code in (200, 201, 202, 207):
-                print("✅ Zernio cross-posting triggered successfully for Instagram/TikTok!")
-                return True
-            else:
+            if r.status_code not in (200, 201, 202, 207):
                 print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+                return False
+
+            post_id = r.json().get("post", {}).get("_id")
+            if not post_id:
+                print(f"⚠️ Zernio response had no post ID to track: {r.text[:300]}")
+                return False
+
+            print(f"ℹ️ Post created (id: {post_id}), polling for actual publish status...")
+            status_url = f"{post_url}/{post_id}"
+            terminal_states = ("published", "failed", "partial")
+            final_post = None
+
+            for attempt in range(24):  # up to 24 * 10s = 4 minutes
+                time.sleep(10)
+                s = requests.get(status_url, headers=headers, timeout=30)
+                if s.status_code != 200:
+                    continue
+                post_obj = s.json().get("post", s.json())
+                if post_obj.get("status") in terminal_states:
+                    final_post = post_obj
+                    break
+
+            if final_post is None:
+                print("⚠️ Zernio post never reached a final status within 4 minutes - check "
+                      "zernio.com/dashboard directly to confirm what actually happened.")
+                return False
+
+            # Report the REAL per-platform outcome, with the live URL as actual proof
+            any_success = False
+            for entry in final_post.get("platforms", []):
+                plat = entry.get("platform", "?")
+                plat_status = entry.get("status", "unknown")
+                plat_url = entry.get("platformPostUrl")
+                if plat_status == "published" and plat_url:
+                    print(f"  ✅ {plat}: published - {plat_url}")
+                    any_success = True
+                else:
+                    print(f"  ❌ {plat}: {plat_status} - {entry.get('error', 'no further detail')}")
+
+            if any_success:
+                print("✅ Zernio cross-post confirmed live (see links above).")
+            else:
+                print("❌ Zernio post finished processing but did NOT actually go live on any platform.")
+            return any_success
+
         except requests.exceptions.Timeout:
             print("⚠️ Zernio post timed out after 300s with no response. The media upload already "
                   "succeeded, so this request likely reached Zernio's servers even though we never "
