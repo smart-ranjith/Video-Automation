@@ -627,12 +627,52 @@ def assemble_video(dynamic_sfx_map):
 # --- 5. UPLOAD & SYNDICATION ---
 def get_public_url(video_file):
     print("☁️ Uploading heavy-duty media for Zernio syndication...")
-    
-    # Attempt 1: Filebin (Highly reliable, up to 250MB, direct links)
+
+    # GitHub Releases - PRIMARY method. Gives a permanent, stable public URL.
+    # Filebin (previously used here) redirects its download URL to a presigned
+    # S3 link that expires after only 60 seconds (confirmed via Filebin's own
+    # API spec) - fine for a human clicking immediately, but async third-party
+    # fetchers (like Instagram's Reels ingestion pipeline) can take longer than
+    # that to actually pull the file, so the link is already dead by the time
+    # they try. That's the most likely explanation for Instagram consistently
+    # failing to process the video while Facebook (faster to fetch) succeeded.
     try:
-        print("   -> Trying Filebin...")
+        print("   -> Trying GitHub Release (stable, non-expiring URL)...")
+        token = os.environ.get("GITHUB_TOKEN")
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        if token and repo:
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+            tag = f"short-{int(time.time())}"
+            r = requests.post(f"https://api.github.com/repos/{repo}/releases", headers=headers, json={
+                "tag_name": tag, "name": tag, "body": "Auto-generated video asset for cross-posting.",
+                "draft": False, "prerelease": False,
+            }, timeout=30)
+            if r.status_code in (200, 201):
+                release = r.json()
+                upload_url = release["upload_url"].split("{")[0]
+                with open(video_file, "rb") as f:
+                    video_bytes = f.read()
+                r2 = requests.post(f"{upload_url}?name={os.path.basename(video_file)}",
+                                    headers={**headers, "Content-Type": "video/mp4"},
+                                    data=video_bytes, timeout=180)
+                if r2.status_code in (200, 201):
+                    print("   ✅ GitHub Release upload successful (stable URL)!")
+                    return r2.json().get("browser_download_url")
+                else:
+                    print(f"   ⚠️ GitHub Release asset upload failed: {r2.text[:300]}")
+            else:
+                print(f"   ⚠️ GitHub Release creation failed: {r.text[:300]}")
+        else:
+            print("   ⚠️ GITHUB_TOKEN/GITHUB_REPOSITORY not available in this environment - skipping GitHub Release method.")
+    except Exception as e:
+        print(f"   ⚠️ GitHub Release error: {e}")
+
+    # Fallback 1: Filebin (fine for Facebook, which fetches fast - but NOT
+    # reliable for Instagram per the expiring-URL issue above). Only used if
+    # GitHub Release hosting isn't available.
+    try:
+        print("   -> Trying Filebin (fallback - may still fail for Instagram specifically)...")
         import string, random
-        # Generate a random temporary bin
         bin_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
         filename = os.path.basename(video_file)
         url = f"https://filebin.net/{bin_id}/{filename}"
@@ -648,7 +688,7 @@ def get_public_url(video_file):
     except Exception as e:
         print(f"   ⚠️ Filebin connection error: {e}")
 
-    # Attempt 2: Uguu.se (128MB limit fallback)
+    # Fallback 2: Uguu.se (128MB limit fallback)
     try:
         print("   -> Trying Uguu.se...")
         with open(video_file, "rb") as f:
@@ -662,7 +702,6 @@ def get_public_url(video_file):
     except Exception as e:
         print(f"   ⚠️ Uguu connection error: {e}")
 
-    # The typo has been fixed! (Changed 'Nones' to 'None')
     return None
 
 def upload_to_youtube(video_file, data, credentials):
