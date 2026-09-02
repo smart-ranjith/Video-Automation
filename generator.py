@@ -597,15 +597,30 @@ def assemble_video(dynamic_sfx_map):
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + extra_layers, size=(1080, 1920))
     final = apply_procedural_compositing(final)
     
-    # Export with ultra-high quality CRF 18 and 12,000k bitrate
+    # Export with ultra-high quality CRF 18 and 12,000k bitrate.
+    # Explicit pix_fmt/movflags/audio settings below match Meta's documented
+    # encoding recommendations for Instagram/Facebook - without forcing these,
+    # ffmpeg's default choices can produce a technically-valid H.264/AAC file
+    # that Instagram's stricter parser still rejects with a generic
+    # "couldn't process this video" error (most commonly caused by a pixel
+    # format other than yuv420p, or the moov atom not being at the front of
+    # the file for streaming).
     final.write_videofile(
         "final_short.mp4", 
         fps=24, 
         codec="libx264", 
         audio_codec="aac", 
+        audio_fps=48000,
         threads=4, 
         bitrate="12000k", 
-        ffmpeg_params=["-crf", "18", "-preset", "slow"]
+        ffmpeg_params=[
+            "-crf", "18", "-preset", "slow",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-movflags", "+faststart",
+            "-ar", "48000",
+        ]
     )
     final.close()
 
