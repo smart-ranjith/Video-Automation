@@ -791,7 +791,10 @@ def repost_via_zernio(video_file, data):
                     print(f"  ✅ {plat}: published - {plat_url}")
                     any_success = True
                 else:
-                    print(f"  ❌ {plat}: {plat_status} - {entry.get('error', 'no further detail')}")
+                    # Print the FULL raw entry rather than guessing a specific field
+                    # name for the error - last time this guessed wrong ("error")
+                    # and printed "no further detail", hiding the real reason.
+                    print(f"  ❌ {plat}: {plat_status} - full detail: {entry}")
 
             if any_success:
                 print("✅ Zernio cross-post confirmed live (see links above).")
