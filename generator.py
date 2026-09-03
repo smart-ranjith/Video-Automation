@@ -270,38 +270,52 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    for attempt in range(3):
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt, 
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
-                )
-            )
-            # response.text is a convenience shortcut that can return None when
-            # Google Search grounding produces a multi-part response (grounding
-            # metadata mixed with text) rather than one simple text block - that
-            # was crashing here with a cryptic 'NoneType has no attribute strip'.
-            # Fall back to manually walking the response parts if the shortcut fails.
-            raw_text = response.text
-            if raw_text is None:
-                parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
-                raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
-            if not raw_text:
-                raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+    # gemini-2.5-flash has had widely-reported persistent 503 "high demand" spells
+    # (a known, ongoing issue per multiple Google AI forum threads, not unique to
+    # this account). Falls back to a different model if the primary one stays
+    # overloaded through all its own retries - capacity issues are often
+    # model-specific, so a different model can succeed even during a primary
+    # model's rough patch.
+    models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
-            raw_text = raw_text.strip()
-            if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
-            data = json.loads(raw_text)
-            if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
-                with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
-            return data
-        except Exception as e:
-            print(f"⚠️ Gemini Attempt {attempt + 1} Failed: {e}")
-            if "429" in str(e) or "503" in str(e): time.sleep(45)
-            else: time.sleep(5)
-    raise Exception("Failed to get response from Gemini.")
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt, 
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                    )
+                )
+                # response.text is a convenience shortcut that can return None when
+                # Google Search grounding produces a multi-part response (grounding
+                # metadata mixed with text) rather than one simple text block - that
+                # was crashing here with a cryptic 'NoneType has no attribute strip'.
+                # Fall back to manually walking the response parts if the shortcut fails.
+                raw_text = response.text
+                if raw_text is None:
+                    parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
+                    raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
+                if not raw_text:
+                    raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
+                data = json.loads(raw_text)
+                if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
+                    with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
+                return data
+            except Exception as e:
+                print(f"⚠️ Gemini ({model_name}) Attempt {attempt + 1} Failed: {e}")
+                if "429" in str(e) or "503" in str(e):
+                    # Exponential backoff per Google's own troubleshooting guidance -
+                    # 15s, 45s, 90s instead of a flat 45s every time.
+                    time.sleep([15, 45, 90][attempt])
+                else:
+                    time.sleep(5)
+        print(f"ℹ️ Giving up on {model_name} after 3 attempts, trying next model if available...")
+    raise Exception("Failed to get response from Gemini (all models exhausted).")
 
 def save_community_post(data):
     print("📝 Generating Community Tab Poll asset...")
