@@ -821,13 +821,21 @@ def repost_via_zernio(video_file, data):
 
             for attempt in range(24):  # up to 24 * 10s = 4 minutes
                 time.sleep(10)
-                s = requests.get(status_url, headers=headers, timeout=30)
-                if s.status_code != 200:
+                try:
+                    s = requests.get(status_url, headers=headers, timeout=30)
+                    if s.status_code != 200:
+                        continue
+                    post_obj = s.json().get("post", s.json())
+                    if post_obj.get("status") in terminal_states:
+                        final_post = post_obj
+                        break
+                except requests.exceptions.RequestException as poll_err:
+                    # A single slow/failed poll shouldn't kill the whole loop or fall
+                    # through to the initial-POST timeout handler below (which prints
+                    # a misleading "media upload already succeeded" message meant for
+                    # a completely different failure point). Just log and keep polling.
+                    print(f"  (poll attempt {attempt + 1} had a network hiccup, continuing: {poll_err})")
                     continue
-                post_obj = s.json().get("post", s.json())
-                if post_obj.get("status") in terminal_states:
-                    final_post = post_obj
-                    break
 
             if final_post is None:
                 print("⚠️ Zernio post never reached a final status within 4 minutes - check "
