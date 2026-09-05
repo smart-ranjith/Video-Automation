@@ -210,6 +210,63 @@ def fetch_retention_dropoff(credentials):
         return None
 
 
+def generate_script_via_groq_fallback(prompt, tags_string):
+    """Last-resort fallback if ALL Gemini models are exhausted/failing. Uses
+    Groq (genuinely generous free tier, OpenAI-compatible API, no mysterious
+    quota issues reported) for generation, and Tavily's free tier (built
+    specifically for feeding search results into LLM prompts) to replace
+    Gemini's built-in Google Search grounding tool, which Groq doesn't have
+    natively."""
+    groq_key = os.environ.get("GROQ_API_KEY")
+    tavily_key = os.environ.get("TAVILY_API_KEY")
+    if not groq_key:
+        print("ℹ️ Groq fallback skipped - GROQ_API_KEY not set.")
+        return None
+
+    search_context = ""
+    if tavily_key:
+        try:
+            print("🔎 Fetching live trend context via Tavily (Groq has no built-in search)...")
+            r = requests.post("https://api.tavily.com/search", json={
+                "api_key": tavily_key,
+                "query": "viral mystery trends unsolved phenomena trending today",
+                "max_results": 5,
+            }, timeout=30)
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                search_context = "\n".join(f"- {res.get('title', '')}: {res.get('content', '')[:200]}" for res in results)
+        except Exception as e:
+            print(f"⚠️ Tavily search fetch failed, proceeding without live context: {e}")
+
+    full_prompt = prompt
+    if search_context:
+        full_prompt = f"Current trending context from live web search:\n{search_context}\n\n{prompt}"
+
+    try:
+        print("🧠 Falling back to Groq for script generation...")
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": full_prompt}],
+                "temperature": 0.9,
+            },
+            timeout=60,
+        )
+        if r.status_code != 200:
+            print(f"⚠️ Groq fallback failed: {r.status_code} - {r.text[:300]}")
+            return None
+        raw_text = r.json()["choices"][0]["message"]["content"].strip()
+        if raw_text.startswith("```"):
+            raw_text = "\n".join(raw_text.split("\n")[1:-1]).strip()
+        data = json.loads(raw_text)
+        print("✅ Groq fallback succeeded.")
+        return data
+    except Exception as e:
+        print(f"⚠️ Groq fallback error: {e}")
+        return None
+
 def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
@@ -312,7 +369,15 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                 else:
                     time.sleep(5)
         print(f"ℹ️ Giving up on {model_name} after 3 attempts, trying next model if available...")
-    raise Exception("Failed to get response from Gemini (all models exhausted).")
+
+    print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
+    fallback_data = generate_script_via_groq_fallback(prompt, tags_string)
+    if fallback_data:
+        if fallback_data.get("is_cliffhanger") and fallback_data.get("cliffhanger_setup"):
+            with open(CLIFFHANGER_FILE, "w") as f: f.write(fallback_data["cliffhanger_setup"])
+        return fallback_data
+
+    raise Exception("Failed to get response from Gemini (all models exhausted) and Groq fallback also failed or wasn't configured.")
 
 def save_community_post(data):
     print("📝 Generating Community Tab Poll asset...")
