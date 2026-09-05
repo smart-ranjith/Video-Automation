@@ -270,13 +270,10 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    # gemini-2.5-flash has had widely-reported persistent 503 "high demand" spells
-    # (a known, ongoing issue per multiple Google AI forum threads, not unique to
-    # this account). Falls back to a different model if the primary one stays
-    # overloaded through all its own retries - capacity issues are often
-    # model-specific, so a different model can succeed even during a primary
-    # model's rough patch.
-    models_to_try = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    # gemini-2.5-flash was deprecated for new API keys (confirmed via live 404
+    # from Google's API: "no longer available to new users... use
+    # models/gemini-3.6-flash"). Updated to the current generation.
+    models_to_try = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
     for model_name in models_to_try:
         for attempt in range(3):
@@ -754,7 +751,7 @@ def post_auto_comment(video_id, script_text, affiliate_link, credentials):
     support_line = f"\n\n🔍 Support the channel: {affiliate_link}" if affiliate_link else ""
     for attempt in range(3):
         try:
-            comment_text = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
+            comment_text = gemini_client.models.generate_content(model='gemini-3.6-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
             youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}}).execute()
             print(f"✅ Monetized auto-comment posted!")
             return
@@ -946,7 +943,7 @@ def reply_to_top_comments(credentials, max_replies=3):
                 continue
             try:
                 reply_text = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.6-flash',
                     contents=f"Write ONE short, warm, engaging reply (under 15 words) to this YouTube comment: \"{top_comment}\""
                 ).text.strip().strip('"')
                 youtube.comments().insert(part="snippet", body={
@@ -1008,4 +1005,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
