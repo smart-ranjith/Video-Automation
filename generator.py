@@ -248,7 +248,7 @@ def generate_script_via_groq_fallback(prompt, tags_string):
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
             json={
-                "model": "llama-3.3-70b-versatile",
+                "model": "openai/gpt-oss-120b",
                 "messages": [{"role": "user", "content": full_prompt}],
                 "temperature": 0.9,
             },
