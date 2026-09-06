@@ -702,6 +702,11 @@ def assemble_video(dynamic_sfx_map):
 
 # --- 5. UPLOAD & SYNDICATION ---
 def get_public_url(video_file):
+    """Returns (url, release_id, tag) for GitHub Release hosting so the caller
+    can delete the release afterward - it only needs to exist long enough for
+    Zernio to fetch it, keeping it forever just clutters the repo. Falls back
+    to Filebin/Uguu (no cleanup needed there, they auto-expire), which return
+    (url, None, None) since there's nothing to delete on our end."""
     print("☁️ Uploading heavy-duty media for Zernio syndication...")
 
     # GitHub Releases - PRIMARY method. Gives a permanent, stable public URL.
@@ -725,6 +730,7 @@ def get_public_url(video_file):
             }, timeout=30)
             if r.status_code in (200, 201):
                 release = r.json()
+                release_id = release["id"]
                 upload_url = release["upload_url"].split("{")[0]
                 with open(video_file, "rb") as f:
                     video_bytes = f.read()
@@ -733,7 +739,7 @@ def get_public_url(video_file):
                                     data=video_bytes, timeout=180)
                 if r2.status_code in (200, 201):
                     print("   ✅ GitHub Release upload successful (stable URL)!")
-                    return r2.json().get("browser_download_url")
+                    return r2.json().get("browser_download_url"), release_id, tag
                 else:
                     print(f"   ⚠️ GitHub Release asset upload failed: {r2.text[:300]}")
             else:
@@ -758,7 +764,7 @@ def get_public_url(video_file):
             r = requests.post(url, data=f, headers=headers, timeout=180)
             if r.status_code in (200, 201):
                 print("   ✅ Filebin upload successful!")
-                return url
+                return url, None, None
             else:
                 print(f"   ⚠️ Filebin rejected the file: Status {r.status_code}")
     except Exception as e:
@@ -772,13 +778,13 @@ def get_public_url(video_file):
             if r.status_code == 200 and r.json().get("success"):
                 direct_url = r.json()["files"][0]["url"]
                 print("   ✅ Uguu upload successful!")
-                return direct_url
+                return direct_url, None, None
             else:
                 print(f"   ⚠️ Uguu rejected the file: {r.text}")
     except Exception as e:
         print(f"   ⚠️ Uguu connection error: {e}")
 
-    return None
+    return None, None, None
 
 def upload_to_youtube(video_file, data, credentials):
     youtube = build("youtube", "v3", credentials=credentials)
@@ -822,6 +828,35 @@ def post_auto_comment(video_id, script_text, affiliate_link, credentials):
             return
         except Exception: time.sleep(5)
 
+def delete_github_release(release_id, tag):
+    """Deletes a GitHub Release created purely as temporary hosting for Zernio.
+    Deleting the release alone leaves the underlying git tag behind, so both
+    need to be removed to avoid the repo accumulating one dangling tag per
+    video forever. Failure here is non-fatal - just means one release lingers,
+    doesn't affect the actual posting outcome, so this only ever logs a
+    warning, never raises."""
+    token = os.environ.get("GITHUB_TOKEN")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        return
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    try:
+        r = requests.delete(f"https://api.github.com/repos/{repo}/releases/{release_id}", headers=headers, timeout=30)
+        if r.status_code == 204:
+            print(f"🧹 Cleaned up temporary GitHub Release (id: {release_id}).")
+        else:
+            print(f"⚠️ Could not delete temporary release {release_id}: {r.status_code} - {r.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ Release cleanup error (non-fatal): {e}")
+
+    if tag:
+        try:
+            r2 = requests.delete(f"https://api.github.com/repos/{repo}/git/refs/tags/{tag}", headers=headers, timeout=30)
+            if r2.status_code not in (204, 404):  # 404 = tag already gone, fine
+                print(f"⚠️ Could not delete tag {tag}: {r2.status_code} - {r2.text[:200]}")
+        except Exception as e:
+            print(f"⚠️ Tag cleanup error (non-fatal): {e}")
+
 def repost_via_zernio(video_file, data):
     print("\n🚀 Preparing Zernio Multi-Platform Syndication...")
     api_key = os.environ.get("ZERNIO_API_KEY")
@@ -829,110 +864,116 @@ def repost_via_zernio(video_file, data):
         print("⚠️ ZERNIO_API_KEY environment variable is missing. Skipping cross-posting.")
         return False
         
-    url = get_public_url(video_file)
+    url, gh_release_id, gh_tag = get_public_url(video_file)
     if not url:
         print("⚠️ Could not generate public media URL via Filebin/Uguu. Skipping Zernio.")
         return False
     
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
-        acc_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8")
-        acc_r = requests.get(acc_url, headers=headers, timeout=30)
-        
-        if acc_r.status_code != 200:
-            print(f"⚠️ ZERNIO API Error ({acc_r.status_code}): {acc_r.text}")
-            return False
-
-        accounts = acc_r.json().get("accounts", [])
-        platform_entries = [{"platform": acc["platform"], "accountId": acc.get("_id") or acc.get("id")} 
-                            for acc in accounts if acc.get("platform") in ("instagram", "facebook", "tiktok")]
-        
-        if not platform_entries:
-            print("⚠️ No connected Instagram/TikTok/Facebook accounts found in Zernio dashboard.")
-            return False
-
-        post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
-        payload = {
-            "content": f"{data.get('title', '')}\n\n{data.get('description', '')}"[:2200],
-            "mediaItems": [{"type": "video", "url": url}],
-            "platforms": platform_entries,
-            "publishNow": True
-        }
-
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         try:
-            # Zernio processes posts asynchronously - status moves through
-            # scheduled -> publishing -> published (or failed/partial). The
-            # CREATION response below only confirms Zernio accepted the request,
-            # NOT that it actually went live - that was the bug: this used to be
-            # treated as final success, but the real status arrives later. Must
-            # poll GET /v1/posts/{postId} until it reaches a terminal state.
-            r = requests.post(post_url, headers=headers, json=payload, timeout=300)
-            if r.status_code not in (200, 201, 202, 207):
-                print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+            acc_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9hY2NvdW50cw==").decode("utf-8")
+            acc_r = requests.get(acc_url, headers=headers, timeout=30)
+        
+            if acc_r.status_code != 200:
+                print(f"⚠️ ZERNIO API Error ({acc_r.status_code}): {acc_r.text}")
                 return False
 
-            post_id = r.json().get("post", {}).get("_id")
-            if not post_id:
-                print(f"⚠️ Zernio response had no post ID to track: {r.text[:300]}")
+            accounts = acc_r.json().get("accounts", [])
+            platform_entries = [{"platform": acc["platform"], "accountId": acc.get("_id") or acc.get("id")} 
+                                for acc in accounts if acc.get("platform") in ("instagram", "facebook", "tiktok")]
+        
+            if not platform_entries:
+                print("⚠️ No connected Instagram/TikTok/Facebook accounts found in Zernio dashboard.")
                 return False
 
-            print(f"ℹ️ Post created (id: {post_id}), polling for actual publish status...")
-            status_url = f"{post_url}/{post_id}"
-            terminal_states = ("published", "failed", "partial")
-            final_post = None
+            post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
+            payload = {
+                "content": f"{data.get('title', '')}\n\n{data.get('description', '')}"[:2200],
+                "mediaItems": [{"type": "video", "url": url}],
+                "platforms": platform_entries,
+                "publishNow": True
+            }
 
-            for attempt in range(24):  # up to 24 * 10s = 4 minutes
-                time.sleep(10)
-                try:
-                    s = requests.get(status_url, headers=headers, timeout=30)
-                    if s.status_code != 200:
+            try:
+                # Zernio processes posts asynchronously - status moves through
+                # scheduled -> publishing -> published (or failed/partial). The
+                # CREATION response below only confirms Zernio accepted the request,
+                # NOT that it actually went live - that was the bug: this used to be
+                # treated as final success, but the real status arrives later. Must
+                # poll GET /v1/posts/{postId} until it reaches a terminal state.
+                r = requests.post(post_url, headers=headers, json=payload, timeout=300)
+                if r.status_code not in (200, 201, 202, 207):
+                    print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+                    return False
+
+                post_id = r.json().get("post", {}).get("_id")
+                if not post_id:
+                    print(f"⚠️ Zernio response had no post ID to track: {r.text[:300]}")
+                    return False
+
+                print(f"ℹ️ Post created (id: {post_id}), polling for actual publish status...")
+                status_url = f"{post_url}/{post_id}"
+                terminal_states = ("published", "failed", "partial")
+                final_post = None
+
+                for attempt in range(24):  # up to 24 * 10s = 4 minutes
+                    time.sleep(10)
+                    try:
+                        s = requests.get(status_url, headers=headers, timeout=30)
+                        if s.status_code != 200:
+                            continue
+                        post_obj = s.json().get("post", s.json())
+                        if post_obj.get("status") in terminal_states:
+                            final_post = post_obj
+                            break
+                    except requests.exceptions.RequestException as poll_err:
+                        # A single slow/failed poll shouldn't kill the whole loop or fall
+                        # through to the initial-POST timeout handler below (which prints
+                        # a misleading "media upload already succeeded" message meant for
+                        # a completely different failure point). Just log and keep polling.
+                        print(f"  (poll attempt {attempt + 1} had a network hiccup, continuing: {poll_err})")
                         continue
-                    post_obj = s.json().get("post", s.json())
-                    if post_obj.get("status") in terminal_states:
-                        final_post = post_obj
-                        break
-                except requests.exceptions.RequestException as poll_err:
-                    # A single slow/failed poll shouldn't kill the whole loop or fall
-                    # through to the initial-POST timeout handler below (which prints
-                    # a misleading "media upload already succeeded" message meant for
-                    # a completely different failure point). Just log and keep polling.
-                    print(f"  (poll attempt {attempt + 1} had a network hiccup, continuing: {poll_err})")
-                    continue
 
-            if final_post is None:
-                print("⚠️ Zernio post never reached a final status within 4 minutes - check "
-                      "zernio.com/dashboard directly to confirm what actually happened.")
-                return False
+                if final_post is None:
+                    print("⚠️ Zernio post never reached a final status within 4 minutes - check "
+                          "zernio.com/dashboard directly to confirm what actually happened.")
+                    return False
 
-            # Report the REAL per-platform outcome, with the live URL as actual proof
-            any_success = False
-            for entry in final_post.get("platforms", []):
-                plat = entry.get("platform", "?")
-                plat_status = entry.get("status", "unknown")
-                plat_url = entry.get("platformPostUrl")
-                if plat_status == "published" and plat_url:
-                    print(f"  ✅ {plat}: published - {plat_url}")
-                    any_success = True
+                # Report the REAL per-platform outcome, with the live URL as actual proof
+                any_success = False
+                for entry in final_post.get("platforms", []):
+                    plat = entry.get("platform", "?")
+                    plat_status = entry.get("status", "unknown")
+                    plat_url = entry.get("platformPostUrl")
+                    if plat_status == "published" and plat_url:
+                        print(f"  ✅ {plat}: published - {plat_url}")
+                        any_success = True
+                    else:
+                        # Print the FULL raw entry rather than guessing a specific field
+                        # name for the error - last time this guessed wrong ("error")
+                        # and printed "no further detail", hiding the real reason.
+                        print(f"  ❌ {plat}: {plat_status} - full detail: {entry}")
+
+                if any_success:
+                    print("✅ Zernio cross-post confirmed live (see links above).")
                 else:
-                    # Print the FULL raw entry rather than guessing a specific field
-                    # name for the error - last time this guessed wrong ("error")
-                    # and printed "no further detail", hiding the real reason.
-                    print(f"  ❌ {plat}: {plat_status} - full detail: {entry}")
+                    print("❌ Zernio post finished processing but did NOT actually go live on any platform.")
+                return any_success
 
-            if any_success:
-                print("✅ Zernio cross-post confirmed live (see links above).")
-            else:
-                print("❌ Zernio post finished processing but did NOT actually go live on any platform.")
-            return any_success
-
-        except requests.exceptions.Timeout:
-            print("⚠️ Zernio post timed out after 300s with no response. The media upload already "
-                  "succeeded, so this request likely reached Zernio's servers even though we never "
-                  "got a reply - check zernio.com/dashboard to see if it actually posted before "
-                  "manually retrying, to avoid double-posting.")
-    except Exception as e:
-        print(f"⚠️ Zernio Syndication Exception: {e}")
-    return False
+            except requests.exceptions.Timeout:
+                print("⚠️ Zernio post timed out after 300s with no response. The media upload already "
+                      "succeeded, so this request likely reached Zernio's servers even though we never "
+                      "got a reply - check zernio.com/dashboard to see if it actually posted before "
+                      "manually retrying, to avoid double-posting.")
+        except Exception as e:
+            print(f"⚠️ Zernio Syndication Exception: {e}")
+        return False
+    finally:
+        # Cleanup: this release only existed so Zernio had something to fetch -
+        # keeping it forever just clutters the repo with one release per video.
+        if gh_release_id:
+            delete_github_release(gh_release_id, gh_tag)
 
 def sanitize_theme_label(visual_theme, max_words=3, max_chars=40):
     """Gemini sometimes returns visual_theme as a full descriptive sentence
