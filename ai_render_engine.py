@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from moviepy import ImageClip, VideoClip, ImageSequenceClip
+from moviepy.editor import ImageClip, VideoClip, ImageSequenceClip
 
 # New AI‑generation imports (install via pip)
 import torch
