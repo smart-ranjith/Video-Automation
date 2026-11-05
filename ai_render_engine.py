@@ -2,11 +2,19 @@ import cv2
 import numpy as np
 from moviepy.editor import ImageClip, VideoClip, ImageSequenceClip
 
-# New AI‑generation imports (install via pip)
+# torch and torchvision are used by the depth model (lazy-loaded below)
 import torch
-from diffusers import StableDiffusionPipeline
 from torchvision import transforms
 from torchvision.transforms import functional as TF
+
+# NOTE: diffusers (StableDiffusionPipeline) is imported lazily inside
+# _load_diffusion_pipeline() — NOT here at module level.  diffusers 0.28.x
+# calls huggingface_hub.cached_download internally during its own __init__,
+# which was removed in huggingface_hub >=0.25.0 and crashes at import time
+# even when the function is never called.  Moving it to a lazy import means
+# the main generator pipeline (which never uses diffusers directly) loads
+# cleanly, and the crash only surfaces if DiffusionAIVideoGenerator is
+# actually instantiated.
 
 # --- Optional depth-based parallax (Phase 2) ---
 # Real video (filmed or AI-generated) has foreground move faster than background -
@@ -244,6 +252,8 @@ def _load_diffusion_pipeline(model_id: str = "runwayml/stable-diffusion-v1-5", d
     The pipeline is heavy (downloads ~4 GB the first time). Subsequent calls reuse
     the cached object, so the overhead is negligible after the first run.
     """
+    # Lazy import — keeps module-level import clean (see note at top of file)
+    from diffusers import StableDiffusionPipeline  # noqa: PLC0415
     global _DIFFUSION_PIPELINE
     try:
         _DIFFUSION_PIPELINE
