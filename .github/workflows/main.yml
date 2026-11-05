@@ -1,9 +1,9 @@
 name: Autonomous YouTube Shorts Factory
 
 on:
-  schedule:
-    - cron: '0 3 * * *' # Runs automatically every day at 3:00 AM UTC
-  workflow_dispatch: # Allows manual triggers anytime
+push:
+    branches: [main]
+    # also keep existing schedule and workflow_dispatch
 
 permissions:
   contents: write   # needed so the workflow can commit topic_history.json etc back to the repo
