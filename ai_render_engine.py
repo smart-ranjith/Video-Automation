@@ -1,6 +1,12 @@
 import cv2
 import numpy as np
-from moviepy.editor import ImageClip, VideoClip, ImageSequenceClip
+from moviepy import ImageClip, VideoClip, ImageSequenceClip
+
+# New AI‑generation imports (install via pip)
+import torch
+from diffusers import StableDiffusionPipeline
+from torchvision import transforms
+from torchvision.transforms import functional as TF
 
 # --- Optional depth-based parallax (Phase 2) ---
 # Real video (filmed or AI-generated) has foreground move faster than background -
@@ -222,3 +228,157 @@ class AIVideoEngine:
                 return (frame * 0.8).astype(np.uint8)
             return frame
         return clip.fl(filter_flicker)
+
+# ---------------------------------------------------------------------------
+# Diffusion-based frame generation utilities (Option 2 & 3)
+# ---------------------------------------------------------------------------
+
+# NOTE: This requires the "diffusers" package (installed earlier) and a compatible
+# model checkpoint. For a lightweight CPU‑only fallback we use the small stable‑
+# diffusion checkpoint "runwayml/stable-diffusion-v1-5". If you have a GPU you can
+# change the device to "cuda" for speed.
+
+def _load_diffusion_pipeline(model_id: str = "runwayml/stable-diffusion-v1-5", device: str = "cpu"):
+    """Load a Stable Diffusion pipeline once and cache it globally.
+
+    The pipeline is heavy (downloads ~4 GB the first time). Subsequent calls reuse
+    the cached object, so the overhead is negligible after the first run.
+    """
+    global _DIFFUSION_PIPELINE
+    try:
+        _DIFFUSION_PIPELINE
+    except NameError:
+        _DIFFUSION_PIPELINE = None
+    if _DIFFUSION_PIPELINE is None:
+        print(f"Loading diffusion model {model_id} on {device} ...")
+        pipe = StableDiffusionPipeline.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            safety_checker=None,
+        )
+        pipe = pipe.to(device)
+        _DIFFUSION_PIPELINE = pipe
+        print("Diffusion pipeline ready.")
+    return _DIFFUSION_PIPELINE
+
+
+def generate_diffusion_frames(
+    prompt: str,
+    num_frames: int,
+    width: int = 1080,
+    height: int = 1920,
+    model_id: str = "runwayml/stable-diffusion-v1-5",
+    device: str = "cpu",
+) -> list[np.ndarray]:
+    """Generate a list of NumPy RGB frames using Stable Diffusion.
+
+    Args:
+        prompt: Text prompt describing the desired visual style/content.
+        num_frames: Number of frames to produce.
+        width, height: Output resolution.
+        model_id: Model repository on HuggingFace.
+        device: "cpu" or "cuda".
+
+    Returns:
+        List of ``np.ndarray`` images with shape (H, W, 3) and dtype ``uint8``.
+    """
+    pipe = _load_diffusion_pipeline(model_id, device)
+    frames = []
+    # Diffusion is expensive; we generate a single keyframe and then slightly
+    # perturb it for the remaining frames to keep the generation time reasonable.
+    # For a true video you would use a text‑to‑video model, but that is beyond the
+    # scope of the current CPU‑only setup.
+    base_image = pipe(prompt, height=height, width=width).images[0]
+    base_np = np.array(base_image)
+    frames.append(base_np)
+    for i in range(1, num_frames):
+        # Apply a tiny random hue shift and noise to simulate motion.
+        jitter = np.random.uniform(-0.02, 0.02, size=3)
+        jitter_img = np.clip(base_np.astype(np.float32) * (1 + jitter), 0, 255).astype(np.uint8)
+        frames.append(jitter_img)
+    return frames
+
+
+class DiffusionAIVideoGenerator:
+    """Wraps ``generate_diffusion_frames`` and feeds the result through the
+    existing procedural pipeline (depth‑parallax, motion‑blur, grain, etc.).
+    This gives you the visual richness of a diffusion image plus the cinematic
+    motion effects already implemented in :class:`ProceduralAIVideoGenerator`.
+    """
+
+    def __init__(
+        self,
+        prompt: str,
+        duration: float,
+        fps: int = 30,
+        impact_times: list[float] | None = None,
+        use_depth_parallax: bool = True,
+    ):
+        self.prompt = prompt
+        self.duration = duration
+        self.fps = fps
+        self.impact_times = impact_times or []
+        self.use_depth_parallax = use_depth_parallax
+
+        # Generate the raw diffusion frames once.
+        self.raw_frames = generate_diffusion_frames(
+            prompt=self.prompt,
+            num_frames=int(self.duration * self.fps),
+            width=1080,
+            height=1920,
+        )
+        # Feed each frame to a ProceduralAIVideoGenerator instance that will
+        # apply the same warping / grain pipeline. To avoid re‑creating the object
+        # for every frame we store a single instance and override its ``image``.
+        self.proc_gen = ProceduralAIVideoGenerator(
+            image_path="",  # placeholder – we'll replace the image attribute.
+            duration=self.duration,
+            fps=self.fps,
+            impact_times=self.impact_times,
+            use_depth_parallax=self.use_depth_parallax,
+        )
+        # Overwrite the loaded image with the first diffusion frame (the rest will
+        # be swapped in the ``render_frame`` method).
+        self.proc_gen.image = self.raw_frames[0]
+        self.proc_gen.h, self.proc_gen.w, _ = self.proc_gen.image.shape
+        # Re‑create the meshgrid now that we know the dimensions.
+        self.proc_gen.grid_x, self.proc_gen.grid_y = np.meshgrid(
+            np.arange(self.proc_gen.w), np.arange(self.proc_gen.h)
+        )
+        self.proc_gen.grid_x = self.proc_gen.grid_x.astype(np.float32)
+        self.proc_gen.grid_y = self.proc_gen.grid_y.astype(np.float32)
+
+    def render_frame(self, t: float) -> np.ndarray:
+        """Render a single frame at time ``t``.
+
+        The underlying procedural generator expects ``self.image`` to contain the
+        current base image. We replace it with the diffusion frame that corresponds
+        to the current time index.
+        """
+        idx = min(int(t * self.fps), len(self.raw_frames) - 1)
+        self.proc_gen.image = self.raw_frames[idx]
+        # Re‑compute the depth map only the first time (expensive). Subsequent
+        # frames reuse the cached map.
+        if idx == 0 and self.use_depth_parallax:
+            self.proc_gen.depth_map = _compute_depth_map(self.proc_gen.image)
+        return self.proc_gen.render_frame(t)
+
+    def to_clip(self) -> VideoClip:
+        return VideoClip(self.render_frame, duration=self.duration)
+
+# ---------------------------------------------------------------------------
+# Simple demonstration helper (run directly from the module)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Example: generate a 4‑second video from a diffusion prompt.
+    demo = DiffusionAIVideoGenerator(
+        prompt="a futuristic city skyline at sunset, ultra‑realistic",
+        duration=4.0,
+        fps=30,
+        impact_times=[1.5, 3.0],
+    )
+    clip = demo.to_clip()
+    out_path = "output_diffusion_video.mp4"
+    print(f"💾 Writing video to {out_path} …")
+    clip.write_videofile(out_path, codec="libx264", fps=30)
+    print("✅ Done")

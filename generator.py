@@ -210,6 +210,63 @@ def fetch_retention_dropoff(credentials):
         return None
 
 
+def generate_script_via_groq_fallback(prompt, tags_string):
+    """Last-resort fallback if ALL Gemini models are exhausted/failing. Uses
+    Groq (genuinely generous free tier, OpenAI-compatible API, no mysterious
+    quota issues reported) for generation, and Tavily's free tier (built
+    specifically for feeding search results into LLM prompts) to replace
+    Gemini's built-in Google Search grounding tool, which Groq doesn't have
+    natively."""
+    groq_key = os.environ.get("GROQ_API_KEY")
+    tavily_key = os.environ.get("TAVILY_API_KEY")
+    if not groq_key:
+        print("ℹ️ Groq fallback skipped - GROQ_API_KEY not set.")
+        return None
+
+    search_context = ""
+    if tavily_key:
+        try:
+            print("🔎 Fetching live trend context via Tavily (Groq has no built-in search)...")
+            r = requests.post("https://api.tavily.com/search", json={
+                "api_key": tavily_key,
+                "query": "viral mystery trends unsolved phenomena trending today",
+                "max_results": 5,
+            }, timeout=30)
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                search_context = "\n".join(f"- {res.get('title', '')}: {res.get('content', '')[:200]}" for res in results)
+        except Exception as e:
+            print(f"⚠️ Tavily search fetch failed, proceeding without live context: {e}")
+
+    full_prompt = prompt
+    if search_context:
+        full_prompt = f"Current trending context from live web search:\n{search_context}\n\n{prompt}"
+
+    try:
+        print("🧠 Falling back to Groq for script generation...")
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={
+                "model": "openai/gpt-oss-120b",
+                "messages": [{"role": "user", "content": full_prompt}],
+                "temperature": 0.9,
+            },
+            timeout=60,
+        )
+        if r.status_code != 200:
+            print(f"⚠️ Groq fallback failed: {r.status_code} - {r.text[:300]}")
+            return None
+        raw_text = r.json()["choices"][0]["message"]["content"].strip()
+        if raw_text.startswith("```"):
+            raw_text = "\n".join(raw_text.split("\n")[1:-1]).strip()
+        data = json.loads(raw_text)
+        print("✅ Groq fallback succeeded.")
+        return data
+    except Exception as e:
+        print(f"⚠️ Groq fallback error: {e}")
+        return None
+
 def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
@@ -270,38 +327,57 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    for attempt in range(3):
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-2.5-flash', 
-                contents=prompt, 
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())]
-                )
-            )
-            # response.text is a convenience shortcut that can return None when
-            # Google Search grounding produces a multi-part response (grounding
-            # metadata mixed with text) rather than one simple text block - that
-            # was crashing here with a cryptic 'NoneType has no attribute strip'.
-            # Fall back to manually walking the response parts if the shortcut fails.
-            raw_text = response.text
-            if raw_text is None:
-                parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
-                raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
-            if not raw_text:
-                raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+    # gemini-2.5-flash was deprecated for new API keys (confirmed via live 404
+    # from Google's API: "no longer available to new users... use
+    # models/gemini-3.6-flash"). Updated to the current generation.
+    models_to_try = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
-            raw_text = raw_text.strip()
-            if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
-            data = json.loads(raw_text)
-            if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
-                with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
-            return data
-        except Exception as e:
-            print(f"⚠️ Gemini Attempt {attempt + 1} Failed: {e}")
-            if "429" in str(e) or "503" in str(e): time.sleep(45)
-            else: time.sleep(5)
-    raise Exception("Failed to get response from Gemini.")
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt, 
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())]
+                    )
+                )
+                # response.text is a convenience shortcut that can return None when
+                # Google Search grounding produces a multi-part response (grounding
+                # metadata mixed with text) rather than one simple text block - that
+                # was crashing here with a cryptic 'NoneType has no attribute strip'.
+                # Fall back to manually walking the response parts if the shortcut fails.
+                raw_text = response.text
+                if raw_text is None:
+                    parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
+                    raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
+                if not raw_text:
+                    raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+
+                raw_text = raw_text.strip()
+                if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
+                data = json.loads(raw_text)
+                if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
+                    with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
+                return data
+            except Exception as e:
+                print(f"⚠️ Gemini ({model_name}) Attempt {attempt + 1} Failed: {e}")
+                if "429" in str(e) or "503" in str(e):
+                    # Exponential backoff per Google's own troubleshooting guidance -
+                    # 15s, 45s, 90s instead of a flat 45s every time.
+                    time.sleep([15, 45, 90][attempt])
+                else:
+                    time.sleep(5)
+        print(f"ℹ️ Giving up on {model_name} after 3 attempts, trying next model if available...")
+
+    print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
+    fallback_data = generate_script_via_groq_fallback(prompt, tags_string)
+    if fallback_data:
+        if fallback_data.get("is_cliffhanger") and fallback_data.get("cliffhanger_setup"):
+            with open(CLIFFHANGER_FILE, "w") as f: f.write(fallback_data["cliffhanger_setup"])
+        return fallback_data
+
+    raise Exception("Failed to get response from Gemini (all models exhausted) and Groq fallback also failed or wasn't configured.")
 
 def save_community_post(data):
     print("📝 Generating Community Tab Poll asset...")
@@ -597,27 +673,82 @@ def assemble_video(dynamic_sfx_map):
     final = CompositeVideoClip([CompositeVideoClip(clips, size=(1080, 1920)).set_audio(final_audio)] + text_clips + extra_layers, size=(1080, 1920))
     final = apply_procedural_compositing(final)
     
-    # Export with ultra-high quality CRF 18 and 12,000k bitrate
+    # Export with ultra-high quality CRF 18 and 12,000k bitrate.
+    # Explicit pix_fmt/movflags/audio settings below match Meta's documented
+    # encoding recommendations for Instagram/Facebook - without forcing these,
+    # ffmpeg's default choices can produce a technically-valid H.264/AAC file
+    # that Instagram's stricter parser still rejects with a generic
+    # "couldn't process this video" error (most commonly caused by a pixel
+    # format other than yuv420p, or the moov atom not being at the front of
+    # the file for streaming).
     final.write_videofile(
         "final_short.mp4", 
         fps=24, 
         codec="libx264", 
         audio_codec="aac", 
+        audio_fps=48000,
         threads=4, 
         bitrate="12000k", 
-        ffmpeg_params=["-crf", "18", "-preset", "slow"]
+        ffmpeg_params=[
+            "-crf", "18", "-preset", "slow",
+            "-pix_fmt", "yuv420p",
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-movflags", "+faststart",
+            "-ar", "48000",
+        ]
     )
     final.close()
 
 # --- 5. UPLOAD & SYNDICATION ---
 def get_public_url(video_file):
     print("☁️ Uploading heavy-duty media for Zernio syndication...")
-    
-    # Attempt 1: Filebin (Highly reliable, up to 250MB, direct links)
+
+    # GitHub Releases - PRIMARY method. Gives a permanent, stable public URL.
+    # Filebin (previously used here) redirects its download URL to a presigned
+    # S3 link that expires after only 60 seconds (confirmed via Filebin's own
+    # API spec) - fine for a human clicking immediately, but async third-party
+    # fetchers (like Instagram's Reels ingestion pipeline) can take longer than
+    # that to actually pull the file, so the link is already dead by the time
+    # they try. That's the most likely explanation for Instagram consistently
+    # failing to process the video while Facebook (faster to fetch) succeeded.
     try:
-        print("   -> Trying Filebin...")
+        print("   -> Trying GitHub Release (stable, non-expiring URL)...")
+        token = os.environ.get("GITHUB_TOKEN")
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        if token and repo:
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+            tag = f"short-{int(time.time())}"
+            r = requests.post(f"https://api.github.com/repos/{repo}/releases", headers=headers, json={
+                "tag_name": tag, "name": tag, "body": "Auto-generated video asset for cross-posting.",
+                "draft": False, "prerelease": False,
+            }, timeout=30)
+            if r.status_code in (200, 201):
+                release = r.json()
+                upload_url = release["upload_url"].split("{")[0]
+                with open(video_file, "rb") as f:
+                    video_bytes = f.read()
+                r2 = requests.post(f"{upload_url}?name={os.path.basename(video_file)}",
+                                    headers={**headers, "Content-Type": "video/mp4"},
+                                    data=video_bytes, timeout=180)
+                if r2.status_code in (200, 201):
+                    print("   ✅ GitHub Release upload successful (stable URL)!")
+                    return r2.json().get("browser_download_url")
+                else:
+                    print(f"   ⚠️ GitHub Release asset upload failed: {r2.text[:300]}")
+            else:
+                print(f"   ⚠️ GitHub Release creation failed: {r.text[:300]}")
+        else:
+            print("   ⚠️ GITHUB_TOKEN/GITHUB_REPOSITORY not available in this environment - skipping GitHub Release method.")
+    except Exception as e:
+        print(f"   ⚠️ GitHub Release error: {e}")
+
+    # Fallback 1: Filebin (fine for Facebook, which fetches fast - but NOT
+    # reliable for Instagram per the expiring-URL issue above). Only used if
+    # GitHub Release hosting isn't available.
+    try:
+        print("   -> Trying Filebin (fallback - may still fail for Instagram specifically)...")
         import string, random
-        # Generate a random temporary bin
         bin_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
         filename = os.path.basename(video_file)
         url = f"https://filebin.net/{bin_id}/{filename}"
@@ -633,7 +764,7 @@ def get_public_url(video_file):
     except Exception as e:
         print(f"   ⚠️ Filebin connection error: {e}")
 
-    # Attempt 2: Uguu.se (128MB limit fallback)
+    # Fallback 2: Uguu.se (128MB limit fallback)
     try:
         print("   -> Trying Uguu.se...")
         with open(video_file, "rb") as f:
@@ -647,7 +778,6 @@ def get_public_url(video_file):
     except Exception as e:
         print(f"   ⚠️ Uguu connection error: {e}")
 
-    # The typo has been fixed! (Changed 'Nones' to 'None')
     return None
 
 def upload_to_youtube(video_file, data, credentials):
@@ -686,7 +816,7 @@ def post_auto_comment(video_id, script_text, affiliate_link, credentials):
     support_line = f"\n\n🔍 Support the channel: {affiliate_link}" if affiliate_link else ""
     for attempt in range(3):
         try:
-            comment_text = gemini_client.models.generate_content(model='gemini-2.5-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
+            comment_text = gemini_client.models.generate_content(model='gemini-3.6-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
             youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}}).execute()
             print(f"✅ Monetized auto-comment posted!")
             return
@@ -730,18 +860,71 @@ def repost_via_zernio(video_file, data):
         }
 
         try:
-            # 300s (was 120s) - Zernio may be transcoding/processing the video
-            # server-side before it can respond, which can genuinely take a while.
-            # NOTE: deliberately not auto-retrying on timeout - if the first request
-            # actually succeeded server-side and we just didn't get the response in
-            # time, blindly resubmitting could create a duplicate live post on
-            # Instagram/Facebook. Safer to report it and let you check manually.
+            # Zernio processes posts asynchronously - status moves through
+            # scheduled -> publishing -> published (or failed/partial). The
+            # CREATION response below only confirms Zernio accepted the request,
+            # NOT that it actually went live - that was the bug: this used to be
+            # treated as final success, but the real status arrives later. Must
+            # poll GET /v1/posts/{postId} until it reaches a terminal state.
             r = requests.post(post_url, headers=headers, json=payload, timeout=300)
-            if r.status_code in (200, 201, 202, 207):
-                print("✅ Zernio cross-posting triggered successfully for Instagram/TikTok!")
-                return True
-            else:
+            if r.status_code not in (200, 201, 202, 207):
                 print(f"⚠️ ZERNIO Post Creation Error ({r.status_code}): {r.text}")
+                return False
+
+            post_id = r.json().get("post", {}).get("_id")
+            if not post_id:
+                print(f"⚠️ Zernio response had no post ID to track: {r.text[:300]}")
+                return False
+
+            print(f"ℹ️ Post created (id: {post_id}), polling for actual publish status...")
+            status_url = f"{post_url}/{post_id}"
+            terminal_states = ("published", "failed", "partial")
+            final_post = None
+
+            for attempt in range(24):  # up to 24 * 10s = 4 minutes
+                time.sleep(10)
+                try:
+                    s = requests.get(status_url, headers=headers, timeout=30)
+                    if s.status_code != 200:
+                        continue
+                    post_obj = s.json().get("post", s.json())
+                    if post_obj.get("status") in terminal_states:
+                        final_post = post_obj
+                        break
+                except requests.exceptions.RequestException as poll_err:
+                    # A single slow/failed poll shouldn't kill the whole loop or fall
+                    # through to the initial-POST timeout handler below (which prints
+                    # a misleading "media upload already succeeded" message meant for
+                    # a completely different failure point). Just log and keep polling.
+                    print(f"  (poll attempt {attempt + 1} had a network hiccup, continuing: {poll_err})")
+                    continue
+
+            if final_post is None:
+                print("⚠️ Zernio post never reached a final status within 4 minutes - check "
+                      "zernio.com/dashboard directly to confirm what actually happened.")
+                return False
+
+            # Report the REAL per-platform outcome, with the live URL as actual proof
+            any_success = False
+            for entry in final_post.get("platforms", []):
+                plat = entry.get("platform", "?")
+                plat_status = entry.get("status", "unknown")
+                plat_url = entry.get("platformPostUrl")
+                if plat_status == "published" and plat_url:
+                    print(f"  ✅ {plat}: published - {plat_url}")
+                    any_success = True
+                else:
+                    # Print the FULL raw entry rather than guessing a specific field
+                    # name for the error - last time this guessed wrong ("error")
+                    # and printed "no further detail", hiding the real reason.
+                    print(f"  ❌ {plat}: {plat_status} - full detail: {entry}")
+
+            if any_success:
+                print("✅ Zernio cross-post confirmed live (see links above).")
+            else:
+                print("❌ Zernio post finished processing but did NOT actually go live on any platform.")
+            return any_success
+
         except requests.exceptions.Timeout:
             print("⚠️ Zernio post timed out after 300s with no response. The media upload already "
                   "succeeded, so this request likely reached Zernio's servers even though we never "
@@ -825,7 +1008,7 @@ def reply_to_top_comments(credentials, max_replies=3):
                 continue
             try:
                 reply_text = gemini_client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.6-flash',
                     contents=f"Write ONE short, warm, engaging reply (under 15 words) to this YouTube comment: \"{top_comment}\""
                 ).text.strip().strip('"')
                 youtube.comments().insert(part="snippet", body={
