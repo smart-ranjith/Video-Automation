@@ -327,10 +327,16 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    # gemini-2.5-flash was deprecated for new API keys (confirmed via live 404
-    # from Google's API: "no longer available to new users... use
-    # models/gemini-3.6-flash"). Updated to the current generation.
-    models_to_try = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    # Each model has its own independent quota bucket on the free tier.
+    # If one is exhausted (429), the next one in the list is tried immediately.
+    # Order: newest/most capable first, cheapest/smallest last as final fallback.
+    models_to_try = [
+        "gemini-2.5-flash",       # generous free quota, great quality
+        "gemini-3.6-flash",       # current generation
+        "gemini-2.0-flash",       # separate quota bucket from 2.5
+        "gemini-1.5-flash-8b",    # smallest/fastest - independent quota
+        "gemini-3.5-flash-lite",  # lite variant
+    ]
 
     for model_name in models_to_try:
         for attempt in range(3):
