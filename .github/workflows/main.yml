@@ -54,13 +54,13 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python generator.py 2>&1 | tee generator_run.log
 
-      - name: Save run log on failure
-        if: failure()
+      - name: Save run output log
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add generator_run.log 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "Capture run failure log [skip ci]"
+          git diff --staged --quiet || git commit -m "Capture generator run log [skip ci]"
           git push || echo "Nothing to push"
 
       - name: Commit updated state files back to repo
