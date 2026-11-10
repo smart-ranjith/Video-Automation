@@ -331,11 +331,10 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     # If one is exhausted (429), the next one in the list is tried immediately.
     # Order: newest/most capable first, cheapest/smallest last as final fallback.
     models_to_try = [
-        "gemini-2.5-flash",       # generous free quota, great quality
+        "gemini-3.8-flash",       # latest active generation recommended by API
         "gemini-3.6-flash",       # current generation
-        "gemini-2.0-flash",       # separate quota bucket from 2.5
-        "gemini-1.5-flash-8b",    # smallest/fastest - independent quota
         "gemini-3.5-flash-lite",  # lite variant
+        "gemini-3.1-pro-preview", # high reasoning fallback
     ]
 
     for model_name in models_to_try:
