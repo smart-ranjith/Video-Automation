@@ -852,11 +852,17 @@ def apply_procedural_compositing(clip):
         
     return clip.fl(add_texture)
 
-def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0)):
+def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0), max_width=960):
     from PIL import Image, ImageDraw
-    font = _load_bold_font(fontsize)
     tmp = Image.new("RGBA", (10, 10))
-    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font, stroke_width=6)
+    draw_tmp = ImageDraw.Draw(tmp)
+    current_size = fontsize
+    font = _load_bold_font(current_size)
+    bbox = draw_tmp.textbbox((0, 0), text, font=font, stroke_width=6)
+    while (bbox[2] - bbox[0]) + depth + 48 > max_width and current_size > 48:
+        current_size -= 8
+        font = _load_bold_font(current_size)
+        bbox = draw_tmp.textbbox((0, 0), text, font=font, stroke_width=6)
     W, H = (bbox[2] - bbox[0]) + depth + 48, (bbox[3] - bbox[1]) + depth + 48
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -1001,7 +1007,7 @@ def assemble_video(dynamic_sfx_map):
         PIL.Image.fromarray(word_array).save(temp_img_path)
         
         # Center the text directly in the viewer's focal path
-        txt_clip = ImageClip(temp_img_path, has_mask=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
+        txt_clip = ImageClip(temp_img_path, transparent=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         
         # Apply the "Editor's Pop": A mathematically calculated zoom-in effect that snaps into place
         txt_clip = txt_clip.resize(lambda t: max(1.0, 1.2 - (t * 4))) 
