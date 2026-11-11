@@ -88,8 +88,8 @@ GEMINI_MODELS = [
 ]
 
 GROQ_MODELS = [
-    "llama-3.3-70b-versatile",
     "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
 ]
 
@@ -579,16 +579,105 @@ def save_community_post(data):
     except Exception: pass
 
 # --- 3. AUDIO & SFX SYNC ---
-async def generate_audio_and_timestamps(text):
-    print(f"🎙️ Generating AI Voiceover ({VOICE})...")
-    communicate = edge_tts.Communicate(text, VOICE)
+def build_estimated_word_timestamps(text, total_duration):
+    """Build proportional word-level timestamps when a TTS engine omits WordBoundary events."""
+    raw_tokens = [tok.strip() for tok in (text or "").split() if tok.strip()]
+    if not raw_tokens or total_duration <= 0:
+        return []
+    weights = []
+    for tok in raw_tokens:
+        base = max(2, len("".join(ch for ch in tok if ch.isalnum())))
+        pause = 2.5 if tok[-1] in ".!?" else (1.2 if tok[-1] in ",;:" else 0.0)
+        weights.append(base + pause)
+    total_weight = sum(weights) or float(len(raw_tokens))
     words = []
-    with open(OUTPUT_AUDIO, "wb") as fp:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio": fp.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                words.append({"text": chunk["text"], "start": chunk["offset"] / 10000000.0, "end": (chunk["offset"] + chunk["duration"]) / 10000000.0})
-    with open("words.json", "w") as f: json.dump(words, f)
+    cursor = 0.0
+    for tok, weight in zip(raw_tokens, weights):
+        dur = total_duration * (weight / total_weight)
+        end = min(total_duration, cursor + dur)
+        words.append({"text": tok, "start": round(cursor, 4), "end": round(end, 4)})
+        cursor = end
+    return words
+
+
+def _read_audio_duration(audio_path):
+    clip = AudioFileClip(audio_path)
+    try:
+        return float(clip.duration or 0.0)
+    finally:
+        clip.close()
+
+
+async def generate_audio_and_timestamps(text):
+    words = []
+    edge_voices = [VOICE] + [v for v in ("en-US-JennyNeural", "en-US-GuyNeural") if v != VOICE]
+    for voice_name in edge_voices[:2]:
+        try:
+            print(f"🎙️ Generating AI Voiceover ({voice_name})...")
+            communicate = edge_tts.Communicate(text, voice_name)
+            attempt_words = []
+            with open(OUTPUT_AUDIO, "wb") as fp:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        fp.write(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        attempt_words.append({
+                            "text": chunk["text"],
+                            "start": chunk["offset"] / 10000000.0,
+                            "end": (chunk["offset"] + chunk["duration"]) / 10000000.0,
+                        })
+            if os.path.exists(OUTPUT_AUDIO) and os.path.getsize(OUTPUT_AUDIO) > 1024:
+                words = attempt_words
+                if not words:
+                    dur = _read_audio_duration(OUTPUT_AUDIO)
+                    words = build_estimated_word_timestamps(text, dur)
+                with open("words.json", "w") as f:
+                    json.dump(words, f)
+                return
+        except Exception as e:
+            print(f"⚠️ edge-tts ({voice_name}) failed: {e}")
+
+    # Fallback 1: gTTS (resilient when Bing WSS returns 403 on cloud runner IPs)
+    try:
+        from gtts import gTTS
+        print("🎙️ Falling back to gTTS voiceover...")
+        await asyncio.to_thread(lambda: gTTS(text=text, lang="en", slow=False).save(OUTPUT_AUDIO))
+        if os.path.exists(OUTPUT_AUDIO) and os.path.getsize(OUTPUT_AUDIO) > 1024:
+            dur = _read_audio_duration(OUTPUT_AUDIO)
+            words = build_estimated_word_timestamps(text, dur)
+            with open("words.json", "w") as f:
+                json.dump(words, f)
+            print(f"✅ gTTS fallback generated {dur:.2f}s audio with {len(words)} synced words.")
+            return
+    except Exception as e:
+        print(f"⚠️ gTTS fallback failed: {e}")
+
+    # Fallback 2: offline espeak-ng + ffmpeg if available on runner
+    import shutil
+    import subprocess
+    espeak_bin = shutil.which("espeak-ng") or shutil.which("espeak")
+    if espeak_bin:
+        tmp_wav = "voiceover_tmp.wav"
+        try:
+            print(f"🎙️ Falling back to offline TTS ({os.path.basename(espeak_bin)})...")
+            subprocess.run([espeak_bin, "-s", "165", "-w", tmp_wav, text], check=True)
+            ffmpeg_bin = shutil.which("ffmpeg")
+            if not ffmpeg_bin:
+                import imageio_ffmpeg
+                ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+            subprocess.run([ffmpeg_bin, "-y", "-i", tmp_wav, OUTPUT_AUDIO], check=True)
+            if os.path.exists(OUTPUT_AUDIO) and os.path.getsize(OUTPUT_AUDIO) > 1024:
+                dur = _read_audio_duration(OUTPUT_AUDIO)
+                words = build_estimated_word_timestamps(text, dur)
+                with open("words.json", "w") as f:
+                    json.dump(words, f)
+                print(f"✅ Offline TTS generated {dur:.2f}s audio with {len(words)} synced words.")
+                return
+        finally:
+            if os.path.exists(tmp_wav):
+                os.remove(tmp_wav)
+
+    raise RuntimeError("All TTS providers (edge-tts, gTTS, espeak) failed to generate voiceover audio.")
 
 def safe_download(url, out_path, min_bytes=2048):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
