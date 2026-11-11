@@ -78,6 +78,31 @@ OUTPUT_AUDIO = "voiceover.mp3"
 
 TOPIC_HISTORY_FILE = "topic_history.json"
 CLIFFHANGER_FILE = "cliffhanger.json"
+VIEWER_REQUESTS_FILE = "viewer_requests.json"
+
+GEMINI_MODELS = [
+    "gemini-3.8-flash",       # latest active generation recommended by API
+    "gemini-3.6-flash",       # current generation
+    "gemini-3.5-flash-lite",  # lite variant
+    "gemini-3.1-pro-preview", # high reasoning fallback
+]
+
+GROQ_MODELS = [
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant",
+]
+
+EVERGREEN_DEMAND_TAGS = [
+    "unsolved mysteries",
+    "science shorts",
+    "space mysteries",
+    "unexplained phenomena",
+    "weird history facts",
+    "deep sea mysteries",
+    "mind blowing facts",
+    "mystery shorts",
+]
 
 def load_topic_history():
     if os.path.exists(TOPIC_HISTORY_FILE):
@@ -89,6 +114,114 @@ def save_topic_history(entry):
     history.append(entry)
     with open(TOPIC_HISTORY_FILE, "w") as f: json.dump(history[-100:], f, indent=2)
 
+def load_viewer_requests():
+    if os.path.exists(VIEWER_REQUESTS_FILE):
+        try:
+            with open(VIEWER_REQUESTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()]
+        except Exception:
+            pass
+    return []
+
+def extract_json_object(raw_text):
+    """Parses JSON from an LLM response even when wrapped in markdown fences or extra prose."""
+    text = (raw_text or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 3:
+            text = "\n".join(lines[1:-1]).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start:end + 1])
+        raise
+
+def optimize_title(title):
+    """Enforces a punchy, untruncated mobile-friendly title with #Shorts cleanly attached."""
+    import re
+    cleaned = re.sub(r"\s+", " ", (title or "").strip().strip('"\''))
+    has_shorts = bool(re.search(r"#shorts?\b", cleaned, flags=re.IGNORECASE))
+    body = re.sub(r"\s*#shorts?\b", "", cleaned, flags=re.IGNORECASE).strip(" -|:,")
+    if not body:
+        body = "The Unexplained Discovery Scientists Can't Ignore"
+    # Keep title under ~65 chars so the curiosity hook isn't truncated in Shorts/Browse feeds
+    max_body_len = 57
+    if len(body) > max_body_len:
+        body = body[:max_body_len].rsplit(" ", 1)[0].rstrip(" -|:,")
+    suffix = " #Shorts" if has_shorts or len(body) <= 57 else ""
+    return f"{body}{suffix}".strip()
+
+def build_description_hashtags(hashtags_list, max_hashtags=4):
+    """Selects 3-5 clean #Hashtags (YouTube displays top 3 above title; too many dilutes reach)."""
+    import re
+    seen = set()
+    result = ["#Shorts"]
+    seen.add("#shorts")
+    for raw in (hashtags_list or []):
+        clean = re.sub(r"[^A-Za-z0-9_]", "", str(raw).replace("#", ""))
+        if not clean:
+            continue
+        tag = f"#{clean}"
+        if tag.lower() not in seen:
+            seen.add(tag.lower())
+            result.append(tag)
+        if len(result) >= max_hashtags:
+            break
+    if len(result) < 3:
+        for fallback in ("#Mystery", "#Science", "#Unexplained"):
+            if fallback.lower() not in seen:
+                seen.add(fallback.lower())
+                result.append(fallback)
+            if len(result) >= max_hashtags:
+                break
+    return " ".join(result)
+
+def build_youtube_seo_tags(seo_tags, hashtags_list=None, channel_tags=None, max_chars=480):
+    """Builds plain keyword phrases (NO # symbols) packed cleanly inside YouTube's 500-char limit."""
+    import re
+    candidates = []
+    for src in (seo_tags or [], channel_tags or [], hashtags_list or [], EVERGREEN_DEMAND_TAGS):
+        for raw in src:
+            phrase = re.sub(r"[#<>]", "", str(raw)).strip()
+            phrase = re.sub(r"\s+", " ", phrase)
+            if 2 <= len(phrase) <= 60:
+                candidates.append(phrase)
+
+    packed = []
+    seen = set()
+    used_chars = 0
+    for tag in candidates:
+        key = tag.lower()
+        if key in seen:
+            continue
+        # YouTube counts quotes around multi-word tags + comma overhead toward the 500-char cap
+        cost = len(tag) + (2 if " " in tag else 0) + (1 if packed else 0)
+        if used_chars + cost > max_chars:
+            continue
+        seen.add(key)
+        packed.append(tag)
+        used_chars += cost
+    return packed
+
+def build_seo_description(data, hashtags_str, affiliate_block=""):
+    """Constructs a high-CTR, search-indexed description with an open hook, debate CTA, and clean hashtags."""
+    desc_hook = (data.get("description") or "").strip()
+    cta_q = (data.get("cta_question") or data.get("poll_question") or "").strip()
+    parts = [desc_hook] if desc_hook else []
+    if cta_q:
+        parts.append(f"💬 What do you think? {cta_q}")
+    parts.append("🔔 Subscribe for daily 30-second mysteries & check the channel playlists for Part 2!")
+    if affiliate_block:
+        parts.append(affiliate_block.strip())
+    if hashtags_str:
+        parts.append(hashtags_str.strip())
+    return "\n\n".join(parts)[:4900]
+
 def fetch_top_performing_titles(credentials, max_results=5):
     try:
         analytics = build("youtubeAnalytics", "v2", credentials=credentials)
@@ -98,8 +231,9 @@ def fetch_top_performing_titles(credentials, max_results=5):
         report = analytics.reports().query(ids="channel==MINE", startDate=start, endDate=end, metrics="views", dimensions="video", sort="-views", maxResults=max_results).execute()
         rows = report.get("rows", [])
         if not rows: return []
+        view_map = {r[0]: int(r[1]) for r in rows}
         vids = youtube.videos().list(part="snippet", id=",".join([r[0] for r in rows])).execute()
-        return [item["snippet"]["title"] for item in vids.get("items", [])]
+        return [f"{item['snippet']['title']} ({view_map.get(item['id'], 0)} views)" for item in vids.get("items", [])]
     except Exception as e:
         print(f"⚠️ Notice: YouTube Analytics API not enabled or accessible (skipping boost topics): {e}")
         return []
@@ -121,9 +255,16 @@ def fetch_high_reach_tags(credentials):
         
         if not dynamic_tags: return fallback_tags
         
-        formatted_tags = list(set([f"#{t.replace(' ', '').replace('#', '')}" for t in dynamic_tags]))
-        print(f"✅ Successfully extracted {len(formatted_tags)} dynamic tags from top videos!")
-        return formatted_tags[:30]
+        # Preserve multi-word search tags intact while deduplicating case-insensitively
+        seen = set()
+        cleaned_tags = []
+        for t in dynamic_tags:
+            val = str(t).strip()
+            if val and val.lower() not in seen:
+                seen.add(val.lower())
+                cleaned_tags.append(val)
+        print(f"✅ Successfully extracted {len(cleaned_tags)} dynamic tags from top videos!")
+        return cleaned_tags[:30]
     except Exception as e:
         print(f"⚠️ Could not fetch dynamic tags, using fallback. Error: {e}")
         return fallback_tags
@@ -210,6 +351,39 @@ def fetch_retention_dropoff(credentials):
         return None
 
 
+def generate_text_with_fallback(prompt, temperature=0.8):
+    """Generates short plain text (e.g., pinned comment or reply) using Gemini model fallbacks then Groq."""
+    for model_name in GEMINI_MODELS:
+        try:
+            res = gemini_client.models.generate_content(model=model_name, contents=prompt)
+            text = (res.text or "").strip().strip('"')
+            if text:
+                return text
+        except Exception:
+            continue
+
+    groq_key = os.environ.get("GROQ_API_KEY")
+    if groq_key:
+        for model_name in GROQ_MODELS:
+            try:
+                r = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": temperature,
+                    },
+                    timeout=30,
+                )
+                if r.status_code == 200:
+                    text = r.json()["choices"][0]["message"]["content"].strip().strip('"')
+                    if text:
+                        return text
+            except Exception:
+                continue
+    return None
+
 def generate_script_via_groq_fallback(prompt, tags_string):
     """Last-resort fallback if ALL Gemini models are exhausted/failing. Uses
     Groq (genuinely generous free tier, OpenAI-compatible API, no mysterious
@@ -242,41 +416,44 @@ def generate_script_via_groq_fallback(prompt, tags_string):
     if search_context:
         full_prompt = f"Current trending context from live web search:\n{search_context}\n\n{prompt}"
 
-    try:
-        print("🧠 Falling back to Groq for script generation...")
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={
-                "model": "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content": full_prompt}],
-                "temperature": 0.9,
-            },
-            timeout=60,
-        )
-        if r.status_code != 200:
-            print(f"⚠️ Groq fallback failed: {r.status_code} - {r.text[:300]}")
-            return None
-        raw_text = r.json()["choices"][0]["message"]["content"].strip()
-        if raw_text.startswith("```"):
-            raw_text = "\n".join(raw_text.split("\n")[1:-1]).strip()
-        data = json.loads(raw_text)
-        print("✅ Groq fallback succeeded.")
-        return data
-    except Exception as e:
-        print(f"⚠️ Groq fallback error: {e}")
-        return None
+    for model_name in GROQ_MODELS:
+        try:
+            print(f"🧠 Falling back to Groq ({model_name}) for script generation...")
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": full_prompt}],
+                    "temperature": 0.9,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=60,
+            )
+            if r.status_code != 200:
+                print(f"⚠️ Groq fallback ({model_name}) failed: {r.status_code} - {r.text[:300]}")
+                continue
+            raw_text = r.json()["choices"][0]["message"]["content"]
+            data = extract_json_object(raw_text)
+            print(f"✅ Groq fallback succeeded using {model_name}.")
+            return data
+        except Exception as e:
+            print(f"⚠️ Groq fallback ({model_name}) error: {e}")
+    return None
 
-def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None):
+def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None, viewer_requests=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
     if not dynamic_tags_list:
-        dynamic_tags_list = ["#Shorts", "#Mystery"]
+        dynamic_tags_list = ["Shorts", "Science Mystery", "Unexplained Phenomena", "Space Mysteries"]
         
-    tags_string = ", ".join(dynamic_tags_list)
+    tags_string = ", ".join(dynamic_tags_list[:20])
 
-    avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-20:])}\n" if avoid_topics else ""
-    boost_block = f"\n    Reverse-engineer these high-performing topics: {'; '.join(boost_topics)}\n" if boost_topics else ""
+    avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-50:])}\n" if avoid_topics else ""
+    boost_block = f"\n    Top performing channel videos (reverse-engineer why viewers clicked & watched): {'; '.join(boost_topics)}\n" if boost_topics else ""
+    demand_block = ""
+    if viewer_requests:
+        demand_block = f"\n    HIGH-DEMAND VIEWER REQUEST (prioritize or weave this topic in if not already covered): {viewer_requests[0]}\n"
     retention_block = ""
     if retention_dropoff_sec:
         retention_block = (f"\n    CRITICAL PACING FIX: your last video lost half its audience by second "
@@ -289,32 +466,45 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
         os.remove(CLIFFHANGER_FILE)
 
     prompt = f"""
-    Search the web for current viral mystery trends, unsolved phenomena, or fascinating historical oddities trending right now.
-    Write an optimized 20-25 second YouTube Shorts script in English based on a fresh trending concept. No filler.
-    {avoid_block}{boost_block}{retention_block}{cliffhanger_block}
+    Search the web for high-demand, trending unsolved mysteries, bizarre scientific discoveries, deep-sea/space anomalies, or shocking historical oddities with massive mainstream curiosity right now.
+    Write an optimized 22-28 second YouTube Shorts script (55-75 spoken words) in English. Zero filler, maximum curiosity and retention.
+    {avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
     
-    Structure Rules:
-    1. HOOK (First 3 seconds): Visually and verbally shocking. No "Did you know".
-    2. BODY: Fast, punchy fragments. 
-    3. THE LOOP: The final sentence must seamlessly bleed back into the first word of the hook.
+    Script Structure Rules (Algorithm Optimization):
+    1. HOOK (First 3 seconds): Immediate pattern interrupt with concrete stakes, numbers, dates, or a shocking contradiction. NEVER start with "Did you know" or "Have you ever wondered".
+    2. ESCALATION BODY: Short, visual, high-tension sentences. Raise a second surprise halfway through so viewers don't swipe away.
+    3. PAYOFF + SEAMLESS LOOP: Save the craziest twist for the final 3 seconds, and end mid-thought/phrase so it bleeds seamlessly back into the first word of the hook (driving >100% rewatch retention).
     
-    Monetization & Engagement:
-    - "affiliate_keyword": A generic 1-2 word product search term related to this mystery (e.g., "telescope", "metal detector").
+    High-CTR Packaging Rules (CRITICAL):
+    - "title": 42-60 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). NEVER use generic "X Mystery #shorts" templates or overuse the word "Mystery".
+    - "thumbnail_text": 2 to 4 ultra-short, shocking UPPERCASE words ONLY (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). Never write a full sentence.
+    - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords + an open curiosity loop that makes viewers watch instead of spoiling the twist.
+    - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#DeepSea", "#ScienceFacts"]).
+    - "seo_tags": 10 to 15 high-demand YouTube Search keyword phrases (2-4 words each, NO # symbol, mixing specific topic queries + broad niche demand like "unsolved ocean mysteries", "weird science discoveries"). Incorporate relevant winning terms from: {tags_string}.
+    - "image_prompts": Provide 8 distinct, vivid vertical-scene image prompts matching the beat-by-beat progression of the script.
+
+    Monetization, Demand & Engagement:
+    - "affiliate_keyword": A generic 1-2 word product search term related to this topic (e.g., "telescope", "night vision").
+    - "cta_question": A polarizing, debate-sparking question for viewers to answer in the comments (drives comment velocity & algorithm push).
+    - "pinned_comment": A short 1-sentence pinned comment asking that debate question + teasing the next video.
     - "poll_question": A highly debatable question about this topic for a Community Tab Poll.
     - "poll_options": An array of 3 short possible answers.
 
     Cinematic Sound Design:
-    - "sfx_cues": Assign 2 or 3 sound effects to specific image clips. Provide the "clip_index" (0 to 9) and a 1-2 word "query" to search on Pixabay (e.g., "heartbeat", "thunder", "metal clank"). 
+    - "sfx_cues": Assign 2 or 3 sound effects to specific image clips. Provide the "clip_index" (0 to 7) and a 1-2 word "query" to search on Pixabay (e.g., "heartbeat", "thunder", "metal clank"). 
 
-    Format as valid JSON exactly like this:
+    Format as valid JSON only (no extra commentary) exactly like this schema:
     {{
       "script": "...",
       "visual_theme": "...",
-      "image_prompts": ["...", "...", "..."],
-      "title": "SEO Title #shorts",
+      "image_prompts": ["...", "...", "...", "...", "...", "...", "...", "..."],
+      "title": "...",
       "thumbnail_text": "...",
-      "tags": ["#tag1", "#tag2", "#tag3"],
+      "tags": ["#Shorts", "#Tag2", "#Tag3"],
+      "seo_tags": ["keyword phrase 1", "keyword phrase 2", "..."],
       "description": "...",
+      "cta_question": "...",
+      "pinned_comment": "...",
       "is_cliffhanger": true/false,
       "cliffhanger_setup": "...",
       "affiliate_keyword": "...",
@@ -322,22 +512,12 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
       "poll_options": ["...", "...", "..."],
       "sfx_cues": [
         {{"clip_index": 2, "query": "thunder"}},
-        {{"clip_index": 6, "query": "heartbeat"}}
+        {{"clip_index": 5, "query": "heartbeat"}}
       ]
     }}
-    - "tags": YOU MUST select 5 to 8 highly relevant hashtags from this exact proven list of my top performers: {tags_string}.
     """
-    # Each model has its own independent quota bucket on the free tier.
-    # If one is exhausted (429), the next one in the list is tried immediately.
-    # Order: newest/most capable first, cheapest/smallest last as final fallback.
-    models_to_try = [
-        "gemini-3.8-flash",       # latest active generation recommended by API
-        "gemini-3.6-flash",       # current generation
-        "gemini-3.5-flash-lite",  # lite variant
-        "gemini-3.1-pro-preview", # high reasoning fallback
-    ]
 
-    for model_name in models_to_try:
+    for model_name in GEMINI_MODELS:
         for attempt in range(3):
             try:
                 response = gemini_client.models.generate_content(
@@ -359,25 +539,28 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                 if not raw_text:
                     raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
 
-                raw_text = raw_text.strip()
-                if raw_text.startswith("```"): raw_text = "\n".join(raw_text.split('\n')[1:-1]).strip()
-                data = json.loads(raw_text)
+                data = extract_json_object(raw_text)
+                data["title"] = optimize_title(data.get("title", ""))
                 if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
                     with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
                 return data
             except Exception as e:
+                err_str = str(e)
                 print(f"⚠️ Gemini ({model_name}) Attempt {attempt + 1} Failed: {e}")
-                if "429" in str(e) or "503" in str(e):
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    break  # Don't burn retries on a retired/non-existent model
+                if "429" in err_str or "503" in err_str:
                     # Exponential backoff per Google's own troubleshooting guidance -
                     # 15s, 45s, 90s instead of a flat 45s every time.
                     time.sleep([15, 45, 90][attempt])
                 else:
                     time.sleep(5)
-        print(f"ℹ️ Giving up on {model_name} after 3 attempts, trying next model if available...")
+        print(f"ℹ️ Giving up on {model_name}, trying next model if available...")
 
     print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
     fallback_data = generate_script_via_groq_fallback(prompt, tags_string)
     if fallback_data:
+        fallback_data["title"] = optimize_title(fallback_data.get("title", ""))
         if fallback_data.get("is_cliffhanger") and fallback_data.get("cliffhanger_setup"):
             with open(CLIFFHANGER_FILE, "w") as f: f.write(fallback_data["cliffhanger_setup"])
         return fallback_data
@@ -445,30 +628,101 @@ def download_ai_visuals(prompts, visual_theme=""):
             if safe_download(f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}", f"media/clip_{index}.jpg", 20000): break
             else: time.sleep(2)
 
+def _load_bold_font(fontsize):
+    from PIL import ImageFont
+    font_candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/impact.ttf",
+    ]
+    for path in font_candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, fontsize)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+def _wrap_thumbnail_words(text_hook):
+    """Wraps thumbnail text cleanly into 1-2 balanced lines without mid-word truncation."""
+    import re
+    words = re.sub(r"\s+", " ", (text_hook or "").strip()).upper().split()
+    words = words[:4]  # Max 4 words keeps thumbnails instantly readable on mobile
+    if not words:
+        return []
+    if len(words) <= 2 and len(" ".join(words)) <= 12:
+        return [" ".join(words)]
+    mid = (len(words) + 1) // 2
+    return [" ".join(words[:mid]), " ".join(words[mid:])]
+
+def _render_thumbnail_banner(lines, max_width=920):
+    """Renders 1-2 lines of auto-sized 3D yellow/white text over a dark contrast pill."""
+    from PIL import Image, ImageDraw
+    fontsize = 128
+    font = _load_bold_font(fontsize)
+    tmp = Image.new("RGBA", (10, 10))
+    tmp_draw = ImageDraw.Draw(tmp)
+
+    while fontsize > 52:
+        font = _load_bold_font(fontsize)
+        widths = [tmp_draw.textbbox((0, 0), line, font=font, stroke_width=8)[2] for line in lines]
+        if max(widths) <= max_width:
+            break
+        fontsize -= 6
+
+    line_boxes = [tmp_draw.textbbox((0, 0), line, font=font, stroke_width=8) for line in lines]
+    line_heights = [b[3] - b[1] for b in line_boxes]
+    line_widths = [b[2] - b[0] for b in line_boxes]
+    line_gap = 18
+    depth = 10
+    pad_x, pad_y = 44, 32
+
+    total_w = max(line_widths) + depth + pad_x * 2
+    total_h = sum(line_heights) + line_gap * (len(lines) - 1) + depth + pad_y * 2
+
+    img = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    # Dark translucent backdrop guarantees text pops even against bright AI imagery
+    draw.rounded_rectangle([(0, 0), (total_w - 1, total_h - 1)], radius=28, fill=(0, 0, 0, 175))
+
+    y_cursor = pad_y
+    for idx, line in enumerate(lines):
+        bbox = line_boxes[idx]
+        lw, lh = line_widths[idx], line_heights[idx]
+        ox = (total_w - lw) // 2 - bbox[0]
+        oy = y_cursor - bbox[1]
+        # Highlight line 1 in high-CTR yellow, line 2 in crisp white
+        fill = (255, 220, 0) if idx == 0 else (255, 255, 255)
+        for d in range(depth, 0, -1):
+            draw.text((ox + d, oy + d), line, font=font, fill=(0, 0, 0, 255))
+        draw.text((ox, oy), line, font=font, fill=fill + (255,), stroke_width=8, stroke_fill=(0, 0, 0, 255))
+        y_cursor += lh + line_gap
+
+    return img
+
 def generate_ai_thumbnail(title, text_hook="", visual_theme="", out_path="thumbnail.jpg"):
     print("🖼️ Painting Custom High-CTR AI Thumbnail...")
     try:
         pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
-        prompt = f"Dramatic high-contrast cinema shot for {title}, {visual_theme}, vibrant saturated colors, central composition, 8k"
+        prompt = (
+            f"Ultra-dramatic high-contrast focal close-up for {title}, {visual_theme}, "
+            "cinematic rim lighting, glowing mysterious subject centered in lower two-thirds, "
+            "clean dark negative space at top third, hyper-detailed, 8k, no text, no words, no watermark"
+        )
         url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}"
         
         if safe_download(url, out_path, min_bytes=20000):
-            # Overlay bold 3D text onto the thumbnail image
-            if text_hook:
+            lines = _wrap_thumbnail_words(text_hook)
+            if lines:
                 base_img = PIL.Image.open(out_path).convert("RGBA")
-                
-                # Render bold 3D text clip
-                clean_hook = text_hook.upper()[:25] # Keep thumbnail hook punchy
-                txt_array = render_3d_word(clean_hook, fontsize=110, fill=(255, 220, 0), depth=12, depth_color=(0, 0, 0))
-                txt_img = PIL.Image.fromarray(txt_array)
-                
-                # Center text on top 1/3 of thumbnail layout
-                pos_x = (base_img.width - txt_img.width) // 2
-                pos_y = (base_img.height // 3) - (txt_img.height // 2)
-                
-                base_img.paste(txt_img, (max(0, pos_x), max(0, pos_y)), txt_img)
+                txt_img = _render_thumbnail_banner(lines, max_width=base_img.width - 140)
+                pos_x = max(0, (base_img.width - txt_img.width) // 2)
+                # Place in upper-third safe zone so YouTube Shorts bottom/right UI never obscures it
+                pos_y = max(80, (base_img.height // 4) - (txt_img.height // 2))
+                base_img.paste(txt_img, (pos_x, pos_y), txt_img)
                 base_img.convert("RGB").save(out_path, quality=95)
-                print("✅ Bold text hook composited onto thumbnail!")
+                print("✅ High-CTR thumbnail banner composited cleanly!")
     except Exception as e: 
         print(f"⚠️ Thumbnail generation failed: {e}")
 
@@ -510,9 +764,8 @@ def apply_procedural_compositing(clip):
     return clip.fl(add_texture)
 
 def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0)):
-    from PIL import Image, ImageDraw, ImageFont
-    try: font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", fontsize)
-    except Exception: font = ImageFont.load_default()
+    from PIL import Image, ImageDraw
+    font = _load_bold_font(fontsize)
     tmp = Image.new("RGBA", (10, 10))
     bbox = ImageDraw.Draw(tmp).textbbox((0, 0), text, font=font, stroke_width=6)
     W, H = (bbox[2] - bbox[0]) + depth + 48, (bbox[3] - bbox[1]) + depth + 48
@@ -524,7 +777,12 @@ def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color
     return np.array(img)
 
 def is_high_impact(word):
-    return any(char.isdigit() for char in word) or word.strip(".,!?\"'").upper() in ["MILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY"]
+    impact_words = {
+        "MILLION", "BILLION", "TRILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY",
+        "NEVER", "HIDDEN", "IMPOSSIBLE", "VANISHED", "FOUND", "WARNING", "DEADLIEST",
+        "BANNED", "DELETED", "PROOF", "ALONE", "ZERO", "FIRST", "LAST", "REAL", "TRAP",
+    }
+    return any(char.isdigit() for char in word) or word.strip(".,!?\"'").upper() in impact_words
 
 def get_watermark_clip(duration, w=1080, h=1920):
     """Small persistent channel watermark, bottom-right corner - gives a
@@ -787,7 +1045,14 @@ def get_public_url(video_file):
 
 def upload_to_youtube(video_file, data, credentials):
     youtube = build("youtube", "v3", credentials=credentials)
-    hashtags = " ".join(f"#{tag.replace(' ', '').replace('#', '')}" for tag in data.get("tags", [])[:8])
+    final_title = optimize_title(data.get("title", ""))
+    data["title"] = final_title
+    hashtags = build_description_hashtags(data.get("tags", []))
+    youtube_tags = build_youtube_seo_tags(
+        seo_tags=data.get("seo_tags", []),
+        hashtags_list=data.get("tags", []),
+        channel_tags=data.get("_channel_tags", []),
+    )
     keyword = urllib.parse.quote(data.get("affiliate_keyword", "mystery books"))
 
     # Real Amazon Associates tag required - set AMAZON_AFFILIATE_TAG env var once you
@@ -800,9 +1065,18 @@ def upload_to_youtube(video_file, data, credentials):
     affiliate_link = ""
     if amazon_tag:
         affiliate_link = f"https://www.amazon.com/s?k={keyword}&tag={amazon_tag}"
-        affiliate_block = f"\n\n👇 Gear up:\n{affiliate_link}"
+        affiliate_block = f"👇 Gear up:\n{affiliate_link}"
 
-    body = {"snippet": {"categoryId": "28", "title": data["title"], "description": f"{data['description']}{affiliate_block}\n\n{hashtags}", "tags": data["tags"]}, "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+    full_description = build_seo_description(data, hashtags, affiliate_block)
+    body = {
+        "snippet": {
+            "categoryId": "28",
+            "title": final_title,
+            "description": full_description,
+            "tags": youtube_tags,
+        },
+        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
+    }
     video_id = youtube.videos().insert(part="snippet,status", body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
     print(f"✅ Success! YouTube Link: https://youtu.be/{video_id}")
     
@@ -815,17 +1089,23 @@ def upload_to_youtube(video_file, data, credentials):
             print(f"⚠️ Notice: Direct thumbnail API upload skipped: {e}")
     return video_id, affiliate_link
 
-def post_auto_comment(video_id, script_text, affiliate_link, credentials):
+def post_auto_comment(video_id, script_text, affiliate_link, credentials, preset_comment=None):
     print("💬 Posting monetized auto-comment...")
     youtube = build("youtube", "v3", credentials=credentials)
     support_line = f"\n\n🔍 Support the channel: {affiliate_link}" if affiliate_link else ""
-    for attempt in range(3):
-        try:
-            comment_text = gemini_client.models.generate_content(model='gemini-3.6-flash', contents=f"Write ONE short, engaging question to pin in the comments for this script: {script_text}").text.strip().strip('"')
-            youtube.commentThreads().insert(part="snippet", body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}}).execute()
-            print(f"✅ Monetized auto-comment posted!")
-            return
-        except Exception: time.sleep(5)
+    comment_text = (preset_comment or "").strip().strip('"')
+    if not comment_text:
+        comment_text = generate_text_with_fallback(
+            f"Write ONE short, debate-sparking question (under 20 words) to pin in the YouTube comments for this script: {script_text}"
+        ) or "What do you think actually happened here? Drop your theory below!"
+    try:
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}},
+        ).execute()
+        print("✅ Monetized auto-comment posted!")
+    except Exception as e:
+        print(f"⚠️ Auto-comment skipped: {e}")
 
 def repost_via_zernio(video_file, data):
     print("\n🚀 Preparing Zernio Multi-Platform Syndication...")
@@ -857,8 +1137,10 @@ def repost_via_zernio(video_file, data):
             return False
 
         post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
+        hashtags_str = build_description_hashtags(data.get("tags", []))
+        social_caption = f"{data.get('title', '')}\n\n{data.get('description', '')}\n\n{hashtags_str}".strip()[:2200]
         payload = {
-            "content": f"{data.get('title', '')}\n\n{data.get('description', '')}"[:2200],
+            "content": social_caption,
             "mediaItems": [{"type": "video", "url": url}],
             "platforms": platform_entries,
             "publishNow": True
@@ -1012,10 +1294,11 @@ def reply_to_top_comments(credentials, max_replies=3):
             if thread["snippet"].get("totalReplyCount", 0) > 0:
                 continue
             try:
-                reply_text = gemini_client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=f"Write ONE short, warm, engaging reply (under 15 words) to this YouTube comment: \"{top_comment}\""
-                ).text.strip().strip('"')
+                reply_text = generate_text_with_fallback(
+                    f"Write ONE short, warm, engaging reply (under 15 words) to this YouTube comment: \"{top_comment}\""
+                )
+                if not reply_text:
+                    continue
                 youtube.comments().insert(part="snippet", body={
                     "snippet": {"parentId": thread_id, "textOriginal": reply_text}
                 }).execute()
@@ -1039,16 +1322,19 @@ async def main():
     boost_topics = fetch_top_performing_titles(credentials)
     retention_dropoff_sec = fetch_retention_dropoff(credentials)
 
-    # Fetch tags from your highest reach videos
+    # Fetch tags from your highest reach videos and queued viewer requests
     viral_tags = fetch_high_reach_tags(credentials)
+    viewer_requests = load_viewer_requests()
     
-    # Pass the tags into the AI generator
+    # Pass the tags and viewer demand into the AI generator
     content = generate_script(
         avoid_topics=[h["title"] for h in load_topic_history()], 
         boost_topics=boost_topics,
         dynamic_tags_list=viral_tags,
-        retention_dropoff_sec=retention_dropoff_sec
+        retention_dropoff_sec=retention_dropoff_sec,
+        viewer_requests=viewer_requests,
     )
+    content["_channel_tags"] = viral_tags
     await generate_audio_and_timestamps(content["script"])
     download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
     
@@ -1067,8 +1353,14 @@ async def main():
     
     vid_id, aff_link = upload_to_youtube("final_short.mp4", content, credentials)
     if vid_id:
-        post_auto_comment(vid_id, content["script"], aff_link, credentials)
+        post_auto_comment(vid_id, content["script"], aff_link, credentials, preset_comment=content.get("pinned_comment"))
         save_topic_history({"title": content["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d")})
+        if viewer_requests:
+            try:
+                with open(VIEWER_REQUESTS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(viewer_requests[1:], f, indent=2)
+            except Exception:
+                pass
         youtube_client = build("youtube", "v3", credentials=credentials)
         add_video_to_themed_playlist(youtube_client, vid_id, content.get("visual_theme", ""))
     repost_via_zernio("final_short.mp4", content)

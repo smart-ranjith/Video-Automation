@@ -52,7 +52,9 @@ jobs:
           CHANNEL_WATERMARK_TEXT: ${{ secrets.CHANNEL_WATERMARK_TEXT }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: python generator.py 2>&1 | tee generator_run.log
+        run: |
+          set -o pipefail
+          python generator.py 2>&1 | tee generator_run.log
 
       - name: Save run output log
         if: always()
@@ -68,6 +70,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add topic_history.json cliffhanger.json performance_report.json 2>/dev/null || true
+          git add topic_history.json cliffhanger.json performance_report.json viewer_requests.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "Update pipeline state files [skip ci]"
           git push || echo "Nothing to push"
