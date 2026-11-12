@@ -481,7 +481,8 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords + an open curiosity loop that makes viewers watch instead of spoiling the twist.
     - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#DeepSea", "#ScienceFacts"]).
     - "seo_tags": 10 to 15 high-demand YouTube Search keyword phrases (2-4 words each, NO # symbol, mixing specific topic queries + broad niche demand like "unsolved ocean mysteries", "weird science discoveries"). Incorporate relevant winning terms from: {tags_string}.
-    - "image_prompts": Provide 8 distinct, vivid vertical-scene image prompts matching the beat-by-beat progression of the script.
+    - "video_queries": Provide 8 concise 2-3 word stock-video search queries (e.g. "deep ocean", "night sky", "ancient ruins", "radar screen") matching each scene beat so real HD video footage can be fetched.
+    - "image_prompts": Provide 8 distinct, vivid vertical-scene image prompts matching the beat-by-beat progression of the script (used as fallback or for surreal scenes).
 
     Monetization, Demand & Engagement:
     - "affiliate_keyword": A generic 1-2 word product search term related to this topic (e.g., "telescope", "night vision").
@@ -497,6 +498,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     {{
       "script": "...",
       "visual_theme": "...",
+      "video_queries": ["...", "...", "...", "...", "...", "...", "...", "..."],
       "image_prompts": ["...", "...", "...", "...", "...", "...", "...", "..."],
       "title": "...",
       "thumbnail_text": "...",
@@ -708,14 +710,177 @@ def download_dynamic_sfx(sfx_cues):
         except Exception: pass
     return sfx_map
 
-def download_ai_visuals(prompts, visual_theme=""):
-    print("🎨 Painting Custom AI Visuals...")
+def _is_valid_video_file(path, min_duration=1.5):
+    """Validate that a downloaded MP4 file decodes cleanly and has usable resolution/length."""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            cap.release()
+            return False
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0.0
+        h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0.0
+        cap.release()
+        duration = (frames / fps) if fps > 0 else 0.0
+        return w >= 480 and h >= 480 and duration >= min_duration
+    except Exception:
+        return False
+
+
+def _pick_pixabay_mp4_url(videos_dict):
+    for tier in ("medium", "large", "small"):
+        info = videos_dict.get(tier) or {}
+        url = info.get("url")
+        size = info.get("size") or 0
+        if url and (size == 0 or size <= 35 * 1024 * 1024):
+            return url
+    return None
+
+
+def _fetch_pixabay_video(query, used_ids):
+    if not PIXABAY_API_KEY or not query:
+        return None, None
+    try:
+        r = requests.get(
+            "https://pixabay.com/api/videos/",
+            params={"key": PIXABAY_API_KEY, "q": query, "per_page": 8, "safesearch": "true"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return None, None
+        hits = r.json().get("hits") or []
+        # Prefer clips not yet used in this video; prefer portrait/tall clips first
+        candidates = [h for h in hits if f"px:{h.get('id')}" not in used_ids]
+        candidates.sort(key=lambda h: (h.get("videos", {}).get("medium", {}).get("height", 0) >= h.get("videos", {}).get("medium", {}).get("width", 1)), reverse=True)
+        for hit in candidates:
+            url = _pick_pixabay_mp4_url(hit.get("videos") or {})
+            if url:
+                return url, f"px:{hit.get('id')}"
+    except Exception:
+        pass
+    return None, None
+
+
+def _fetch_pexels_video(query, used_ids):
+    pexels_key = os.environ.get("PEXELS_API_KEY")
+    if not pexels_key or not query:
+        return None, None
+    try:
+        r = requests.get(
+            "https://api.pexels.com/videos/search",
+            headers={"Authorization": pexels_key},
+            params={"query": query, "per_page": 8, "orientation": "portrait"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return None, None
+        for vid in r.json().get("videos") or []:
+            vid_key = f"pxl:{vid.get('id')}"
+            if vid_key in used_ids:
+                continue
+            mp4s = [
+                vf for vf in (vid.get("video_files") or [])
+                if vf.get("file_type") == "video/mp4" and (vf.get("width") or 0) >= 540
+            ]
+            mp4s.sort(key=lambda vf: abs((vf.get("width") or 1080) - 1080))
+            if mp4s:
+                return mp4s[0].get("link"), vid_key
+    except Exception:
+        pass
+    return None, None
+
+
+def _fetch_nasa_video(query, used_ids):
+    if not query:
+        return None, None
+    try:
+        r = requests.get(
+            "https://images-api.nasa.gov/search",
+            params={"q": query, "media_type": "video"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return None, None
+        items = (r.json().get("collection") or {}).get("items") or []
+        for item in items[:6]:
+            nasa_id = ((item.get("data") or [{}])[0]).get("nasa_id")
+            vid_key = f"nasa:{nasa_id}"
+            if not nasa_id or vid_key in used_ids:
+                continue
+            coll_href = item.get("href")
+            if not coll_href:
+                continue
+            assets = requests.get(coll_href, timeout=15).json()
+            for suffix in ("~medium.mp4", "~mobile.mp4", "~preview.mp4"):
+                match = next((u for u in assets if isinstance(u, str) and u.endswith(suffix)), None)
+                if match:
+                    return match, vid_key
+    except Exception:
+        pass
+    return None, None
+
+
+def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
+    """Fetch a hybrid of real HD stock videos (.mp4) and custom AI parallax visuals (.jpg)."""
+    print("🎬 Sourcing Hybrid Stock Videos + Custom AI Visuals...")
+    for stale in os.listdir("media"):
+        if stale.startswith("clip_") and stale.endswith((".mp4", ".jpg")):
+            try:
+                os.remove(os.path.join("media", stale))
+            except OSError:
+                pass
+
     pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
-    for index, prompt in enumerate(prompts):
-        full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
-        for attempt in range(4):
-            if safe_download(f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}", f"media/clip_{index}.jpg", 20000): break
-            else: time.sleep(2)
+    queries = list(video_queries or [])
+    used_video_ids = set()
+    video_count = 0
+    image_count = 0
+
+    for index, prompt in enumerate(image_prompts):
+        raw_query = (queries[index] if index < len(queries) else "").strip()
+        fallback_words = " ".join(prompt.split()[:3])
+        search_candidates = [q for q in (raw_query, " ".join(raw_query.split()[:2]), fallback_words) if q]
+
+        got_video = False
+        mp4_path = f"media/clip_{index}.mp4"
+        for q in search_candidates:
+            for fetcher in (_fetch_pixabay_video, _fetch_pexels_video, _fetch_nasa_video):
+                url, vid_key = fetcher(q, used_video_ids)
+                if url and safe_download(url, mp4_path, min_bytes=50000):
+                    if _is_valid_video_file(mp4_path):
+                        used_video_ids.add(vid_key)
+                        got_video = True
+                        video_count += 1
+                        print(f"   🎥 Scene {index}: stock video ({vid_key}) for '{q}'")
+                        break
+                    try:
+                        os.remove(mp4_path)
+                    except OSError:
+                        pass
+            if got_video:
+                break
+
+        if not got_video:
+            full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
+            jpg_path = f"media/clip_{index}.jpg"
+            for _attempt in range(4):
+                if safe_download(
+                    f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}",
+                    jpg_path,
+                    20000,
+                ):
+                    image_count += 1
+                    print(f"   🎨 Scene {index}: custom AI visual fallback")
+                    break
+                time.sleep(2)
+
+    print(f"✅ Media ready: {video_count} stock video clips + {image_count} AI parallax scenes.")
+
+
+def download_ai_visuals(prompts, visual_theme=""):
+    return download_visual_media(prompts, video_queries=None, visual_theme=visual_theme)
 
 def _load_bold_font(fontsize):
     from PIL import ImageFont
@@ -832,24 +997,31 @@ def safe_color_grade(get_frame, t):
     frame = get_frame(t).astype(np.float32)
     return np.clip((frame - 127.0) * 1.05 + 127.0 * 1.02, 0, 255).astype('uint8')
 
+_VIGNETTE_CACHE = {}
+_NOISE_POOL = None
+
+
 def apply_procedural_compositing(clip):
     """Simulates a human editor adding a cinematic vignette and subtle film grain."""
     def add_texture(get_frame, t):
+        global _NOISE_POOL
         frame = get_frame(t).astype(np.float32)
         h, w = frame.shape[:2]
-        
-        # 1. Generate Vignette (Darken edges to guide the eye)
-        X, Y = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
-        radius = np.sqrt(X**2 + Y**2)
-        vignette = np.clip(1 - (radius * 0.6), 0, 1)
-        
-        # 2. Add subtle moving grain
-        noise = np.random.normal(loc=0, scale=8, size=frame.shape).astype(np.float32)
-        
-        # Blend layout
-        composited = (frame * vignette[:, :, np.newaxis]) + noise
+
+        vignette = _VIGNETTE_CACHE.get((h, w))
+        if vignette is None:
+            X, Y = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
+            radius = np.sqrt(X**2 + Y**2)
+            vignette = np.clip(1 - (radius * 0.55), 0, 1).astype(np.float32)[:, :, np.newaxis]
+            _VIGNETTE_CACHE[(h, w)] = vignette
+
+        if _NOISE_POOL is None or _NOISE_POOL[0].shape != frame.shape:
+            _NOISE_POOL = [np.random.normal(loc=0, scale=7, size=frame.shape).astype(np.float32) for _ in range(6)]
+        noise = _NOISE_POOL[int(t * 24) % len(_NOISE_POOL)]
+
+        composited = (frame * vignette) + noise
         return np.clip(composited, 0, 255).astype(np.uint8)
-        
+
     return clip.fl(add_texture)
 
 def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color=(120, 95, 0), max_width=960):
@@ -902,10 +1074,74 @@ def get_watermark_clip(duration, w=1080, h=1920):
     clip = ImageClip(arr).set_duration(duration)
     return clip.set_position((w - arr.shape[1] - 24, h - arr.shape[0] - 140))  # above the retention bar area
 
+def discover_media_scenes(media_dir="media"):
+    """Return ordered scene paths (clip_0..clip_N), preferring .mp4 video clips when present."""
+    by_idx = {}
+    for fname in os.listdir(media_dir):
+        if not fname.startswith("clip_") or not fname.endswith((".mp4", ".jpg")):
+            continue
+        stem, ext = os.path.splitext(fname)
+        try:
+            idx = int(stem.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        full = os.path.join(media_dir, fname)
+        if idx not in by_idx or ext == ".mp4":
+            by_idx[idx] = full
+    return [by_idx[i] for i in sorted(by_idx)]
+
+
+def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times=None, fps=24):
+    """Cover-fit a stock MP4 to 1080x1920 vertical 9:16 with audio-reactive kinetic punch."""
+    import cv2
+    src = VideoFileClip(video_path).without_audio()
+    opened_handles = [src]
+    src_dur = float(src.duration or 0.0)
+    if src_dur > duration + 0.8:
+        offset = min(src_dur - duration, src_dur * 0.2)
+        trimmed = src.subclip(offset, offset + duration)
+    elif 0.1 < src_dur < duration:
+        trimmed = vfx.loop(src, duration=duration).set_duration(duration)
+    else:
+        trimmed = src.subclip(0, min(duration, src_dur or duration)).set_duration(duration)
+
+    # Cover-scale to fill 1080x1920 completely without letterboxing
+    cw, ch = trimmed.size
+    if (cw / max(ch, 1)) > (1080.0 / 1920.0):
+        fitted = trimmed.resize(height=1920)
+    else:
+        fitted = trimmed.resize(width=1080)
+    fw, fh = fitted.size
+    x1 = max(0, (fw - 1080) // 2)
+    y1 = max(0, (fh - 1920) // 2)
+    cropped = fitted.crop(x1=x1, y1=y1, width=1080, height=1920)
+
+    impacts = impact_times or []
+
+    def kinetic_grade(get_frame, t):
+        frame = get_frame(t)
+        abs_t = start_time + t
+        progress = t / max(duration, 0.01)
+        scale = 1.0 + 0.04 * progress
+        for imp_t in impacts:
+            if imp_t <= abs_t <= imp_t + 0.28:
+                scale += 0.08 * (1.0 - (abs_t - imp_t) / 0.28)
+                break
+        if scale > 1.002:
+            h, w = frame.shape[:2]
+            M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), 0.0, scale)
+            frame = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+        # Match cinematic contrast grade & slightly moody exposure of AI scenes
+        return np.clip((frame.astype(np.float32) - 127.0) * 1.06 + 123.0, 0, 255).astype(np.uint8)
+
+    return cropped.fl(kinetic_grade).set_fps(fps).set_duration(duration), opened_handles
+
+
 def assemble_video(dynamic_sfx_map):
-    print("\n🎬 Assembling cinematic video with Internal Procedural AI Motion Engine...")
+    print("\n🎬 Assembling cinematic video (Hybrid Stock Footage + Procedural AI Motion Engine)...")
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
+    opened_video_handles = [voice_audio]
     
     with open("words.json", "r") as f: words = json.load(f)
     
@@ -921,8 +1157,10 @@ def assemble_video(dynamic_sfx_map):
         bgm = AudioFileClip("background_music.mp3").fx(afx.audio_loop, duration=voice_audio.duration).fl(filter_audio)
         audio_tracks.append(bgm)
 
-    media_files = [os.path.join("media", f) for f in os.listdir("media") if f.endswith(".jpg")]
-    media_files.sort(key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+    media_files = discover_media_scenes("media")
+    if not media_files:
+        raise FileNotFoundError("No media/clip_*.mp4 or media/clip_*.jpg files found for video assembly.")
+    fallback_images = [p for p in media_files if p.endswith(".jpg")]
     
     # 1. Parse the data structure to find natural sentence boundaries
     sentence_boundaries = []
@@ -941,7 +1179,7 @@ def assemble_video(dynamic_sfx_map):
     boundary_index = 0
     has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
 
-    # 2. Loop through the calculated boundaries instead of rigid 3-second blocks
+    # 2. Loop through the calculated boundaries (snappier <=2.5s hook cuts, <=3.8s body)
     while current_time < voice_audio.duration and boundary_index < len(sentence_boundaries):
         media_path = media_files[media_index % len(media_files)]
         
@@ -949,26 +1187,53 @@ def assemble_video(dynamic_sfx_map):
         target_end = min(sentence_boundaries[boundary_index], voice_audio.duration)
         clip_dur = target_end - current_time
         
-        # Safety fallback: If a sentence is incredibly long, break it up max every 4 seconds
-        if clip_dur > 4.0:
-            clip_dur = 4.0
+        max_seg = 2.5 if current_time < 3.0 else 3.8
+        if clip_dur > max_seg:
+            clip_dur = max_seg
         else:
             boundary_index += 1
 
-        # 3. Synthesize dynamic procedural 3D motion with Audio-Reactive Micro-Zooms
-        warped_clip = ProceduralAIVideoGenerator(
-            media_path, 
-            duration=clip_dur, 
-            fps=24, 
-            start_time=current_time, 
-            impact_times=impact_timestamps
-        ).to_clip()
+        # 3. Use real HD stock video when available, or AI MiDaS 3D parallax for still scenes
+        clip = None
+        if media_path.endswith(".mp4"):
+            try:
+                vid_clip, handles = _prepare_stock_video_clip(
+                    media_path, duration=clip_dur, start_time=current_time, impact_times=impact_timestamps, fps=24
+                )
+                opened_video_handles.extend(handles)
+                clip = vid_clip.set_start(current_time)
+            except Exception as e:
+                print(f"⚠️ Stock clip '{media_path}' decode failed ({e}), falling back.")
+                if fallback_images:
+                    media_path = fallback_images[media_index % len(fallback_images)]
+                else:
+                    alt_mp4s = [p for p in media_files if p.endswith(".mp4") and p != media_path]
+                    for alt in alt_mp4s:
+                        try:
+                            vid_clip, handles = _prepare_stock_video_clip(
+                                alt, duration=clip_dur, start_time=current_time, impact_times=impact_timestamps, fps=24
+                            )
+                            opened_video_handles.extend(handles)
+                            clip = vid_clip.set_start(current_time)
+                            break
+                        except Exception:
+                            continue
+
+        if clip is None:
+            if media_path.endswith(".jpg") and os.path.exists(media_path):
+                warped_clip = ProceduralAIVideoGenerator(
+                    media_path,
+                    duration=clip_dur,
+                    fps=24,
+                    start_time=current_time,
+                    impact_times=impact_timestamps,
+                ).to_clip()
+                clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
+            else:
+                clip = ColorClip(size=(1080, 1920), color=(10, 14, 22)).set_duration(clip_dur).set_start(current_time)
         
-        # 4. Apply AI frame flickering & color grading
-        clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
-        
-        if current_time > 0: 
-            clip = clip.crossfadein(0.25) # Smooth visual blend to complement the audio overlap
+        if current_time > 0 and clip_dur > 0.5:
+            clip = clip.crossfadein(0.2) # Smooth visual blend to complement the audio overlap
         clips.append(clip)
         
         # 5. Add procedural glitch transitions & sound cues on the cuts
@@ -1039,24 +1304,31 @@ def assemble_video(dynamic_sfx_map):
     # "couldn't process this video" error (most commonly caused by a pixel
     # format other than yuv420p, or the moov atom not being at the front of
     # the file for streaming).
-    final.write_videofile(
-        "final_short.mp4", 
-        fps=24, 
-        codec="libx264", 
-        audio_codec="aac", 
-        audio_fps=48000,
-        threads=4, 
-        bitrate="12000k", 
-        ffmpeg_params=[
-            "-crf", "18", "-preset", "slow",
-            "-pix_fmt", "yuv420p",
-            "-profile:v", "high",
-            "-level", "4.2",
-            "-movflags", "+faststart",
-            "-ar", "48000",
-        ]
-    )
-    final.close()
+    try:
+        final.write_videofile(
+            "final_short.mp4", 
+            fps=24, 
+            codec="libx264", 
+            audio_codec="aac", 
+            audio_fps=48000,
+            threads=4, 
+            bitrate="12000k", 
+            ffmpeg_params=[
+                "-crf", "18", "-preset", "slow",
+                "-pix_fmt", "yuv420p",
+                "-profile:v", "high",
+                "-level", "4.2",
+                "-movflags", "+faststart",
+                "-ar", "48000",
+            ]
+        )
+    finally:
+        final.close()
+        for h in opened_video_handles:
+            try:
+                h.close()
+            except Exception:
+                pass
 
 # --- 5. UPLOAD & SYNDICATION ---
 def get_public_url(video_file):
@@ -1431,7 +1703,11 @@ async def main():
     )
     content["_channel_tags"] = viral_tags
     await generate_audio_and_timestamps(content["script"])
-    download_ai_visuals(content["image_prompts"], content.get("visual_theme", ""))
+    download_visual_media(
+        content["image_prompts"],
+        video_queries=content.get("video_queries", []),
+        visual_theme=content.get("visual_theme", ""),
+    )
     
     # Corrected High-CTR Thumbnail generation (runs BEFORE video assembly and YouTube upload)
     generate_ai_thumbnail(

@@ -45,6 +45,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           CLIENT_SECRETS_BASE64: ${{ secrets.CLIENT_SECRETS_BASE64 }}
           TOKEN_PICKLE_BASE64: ${{ secrets.TOKEN_PICKLE_BASE64 }}
           ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
