@@ -519,9 +519,9 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     - "title": 42-60 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). NEVER use generic "X Mystery #shorts" templates or overuse the word "Mystery".
     - "title_variants": Provide 3 distinct high-CTR title variations for YouTube Studio A/B testing:
       [
-        {"type": "Curiosity Gap", "title": "... #Shorts"},
-        {"type": "Metric/Urgency", "title": "... #Shorts"},
-        {"type": "Shock Fact", "title": "... #Shorts"}
+        {{"type": "Curiosity Gap", "title": "... #Shorts"}},
+        {{"type": "Metric/Urgency", "title": "... #Shorts"}},
+        {{"type": "Shock Fact", "title": "... #Shorts"}}
       ]
     - "thumbnail_text": 2 to 4 ultra-short, shocking UPPERCASE words ONLY (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). Never write a full sentence.
     - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords + an open curiosity loop that makes viewers watch instead of spoiling the twist.

@@ -195,16 +195,68 @@ def review_footage_item(path: str, target_dur: float = 3.0) -> FootageLogEntry:
     )
 
 
-def build_editorial_footage_log(media_files: List[str], brief: CreativeBrief) -> List[FootageLogEntry]:
-    """Review all available footage and construct an organized editorial log with assigned shot scales."""
-    log_entries = []
-    for idx, path in enumerate(media_files):
-        entry = review_footage_item(path, target_dur=3.2)
-        scale = brief.shot_scale_plan[idx % len(brief.shot_scale_plan)]
-        entry.assigned_scale = scale
-        log_entries.append(entry)
+def optimize_editorial_sequence(candidates: List[FootageLogEntry], brief: CreativeBrief) -> List[FootageLogEntry]:
+    """CineMind Stage 6 & 16: Global Sequence Optimization.
+    Scores shots multi-dimensionally (Quality, Motion, Scale Fit) and orders them
+    to fulfill the narrative beat plan without repetitive shot sizes or jarring motion jumps.
+    """
+    if len(candidates) <= 1:
+        return candidates
 
-    print(f"📋 CineMind Footage Review: Reviewed {len(log_entries)} assets.")
+    beat_plan = brief.shot_scale_plan
+    n_beats = len(beat_plan)
+
+    preferred_motion = {
+        "ESTABLISHING_WIDE": 6.0,
+        "MACRO_CLOSEUP": 3.0,
+        "DYNAMIC_BROLL": 12.0,
+        "MEDIUM_REVEAL": 5.0,
+        "HIGH_MOTION_ACTION": 18.0,
+        "DEEP_SCALE_WIDE": 4.0,
+        "EXTREME_CLOSEUP": 3.0,
+        "SEAMLESS_LOOP_OUTRO": 7.0,
+    }
+
+    unassigned = list(candidates)
+    optimized_sequence = []
+
+    for beat_idx in range(min(n_beats, len(candidates))):
+        target_scale = beat_plan[beat_idx]
+        target_m = preferred_motion.get(target_scale, 6.0)
+
+        best_cand = None
+        best_score = -1e9
+
+        for cand in unassigned:
+            q_score = cand.quality_score
+            motion_delta = abs(cand.motion_energy - target_m)
+            m_score = max(0.0, 50.0 - motion_delta * 3.0)
+            continuity_penalty = 25.0 if (optimized_sequence and optimized_sequence[-1].assigned_scale == target_scale) else 0.0
+
+            total_score = (0.5 * q_score) + (0.5 * m_score) - continuity_penalty
+            if total_score > best_score:
+                best_score = total_score
+                best_cand = cand
+
+        if best_cand:
+            best_cand.assigned_scale = target_scale
+            optimized_sequence.append(best_cand)
+            unassigned.remove(best_cand)
+
+    for cand in unassigned:
+        scale = beat_plan[len(optimized_sequence) % n_beats]
+        cand.assigned_scale = scale
+        optimized_sequence.append(cand)
+
+    return optimized_sequence
+
+
+def build_editorial_footage_log(media_files: List[str], brief: CreativeBrief) -> List[FootageLogEntry]:
+    """Review all available footage and construct an organized editorial log with global sequence optimization."""
+    raw_entries = [review_footage_item(path, target_dur=3.2) for path in media_files]
+    log_entries = optimize_editorial_sequence(raw_entries, brief)
+
+    print(f"📋 CineMind Footage Review: Evaluated {len(log_entries)} assets (Global Sequence Optimized).")
     for idx, e in enumerate(log_entries):
         print(f"   [{idx}] {os.path.basename(e.path)} | type={e.media_type} | scale={e.assigned_scale} | Q={e.quality_score} | motion={e.motion_energy}")
     return log_entries
