@@ -1,4 +1,5 @@
 import os
+import math
 import PIL.Image
 import numpy as np
 import io
@@ -113,6 +114,19 @@ EVERGREEN_DEMAND_TAGS = [
     "mystery shorts",
 ]
 
+MANDATORY_VIRAL_HASHTAGS = [
+    "#shorts",
+    "#youtubeshorts",
+    "#trending",
+    "#viral",
+    "#subscribe",
+    "#foryou",
+    "#foryoupage",
+    "#fyp",
+    "#explorepage",
+    "#youtube",
+]
+
 def load_topic_history():
     if os.path.exists(TOPIC_HISTORY_FILE):
         with open(TOPIC_HISTORY_FILE, "r") as f: return json.load(f)
@@ -194,6 +208,10 @@ def build_youtube_seo_tags(seo_tags, hashtags_list=None, channel_tags=None, max_
     """Builds plain keyword phrases (NO # symbols) packed cleanly inside YouTube's 500-char limit."""
     import re
     candidates = []
+    # Priority 1: High-reach viral discovery keywords requested for maximum distribution
+    viral_keywords = [t.lstrip("#") for t in MANDATORY_VIRAL_HASHTAGS]
+    candidates.extend(viral_keywords)
+
     for src in (seo_tags or [], channel_tags or [], hashtags_list or [], EVERGREEN_DEMAND_TAGS):
         for raw in src:
             phrase = re.sub(r"[#<>]", "", str(raw)).strip()
@@ -218,7 +236,7 @@ def build_youtube_seo_tags(seo_tags, hashtags_list=None, channel_tags=None, max_
     return packed
 
 def build_seo_description(data, hashtags_str, affiliate_block=""):
-    """Constructs a high-CTR, search-indexed description with an open hook, debate CTA, and clean hashtags."""
+    """Constructs a high-CTR, search-indexed description with an open hook, debate CTA, niche tags, and full viral hashtag cloud."""
     desc_hook = (data.get("description") or "").strip()
     cta_q = (data.get("cta_question") or data.get("poll_question") or "").strip()
     parts = [desc_hook] if desc_hook else []
@@ -227,8 +245,12 @@ def build_seo_description(data, hashtags_str, affiliate_block=""):
     parts.append("🔔 Subscribe for daily 30-second mysteries & check the channel playlists for Part 2!")
     if affiliate_block:
         parts.append(affiliate_block.strip())
+    
+    viral_cloud = " ".join(MANDATORY_VIRAL_HASHTAGS)
     if hashtags_str:
-        parts.append(hashtags_str.strip())
+        parts.append(f"{hashtags_str.strip()}\n\n{viral_cloud}")
+    else:
+        parts.append(viral_cloud)
     return "\n\n".join(parts)[:4900]
 
 def fetch_top_performing_titles(credentials, max_results=5):
@@ -444,6 +466,14 @@ def generate_script_via_groq_fallback(prompt, tags_string):
                 continue
             raw_text = r.json()["choices"][0]["message"]["content"]
             data = extract_json_object(raw_text)
+            data["title"] = optimize_title(data.get("title", ""))
+            variants = data.get("title_variants")
+            if variants and isinstance(variants, list):
+                print("📊 CineMind A/B Title Candidates:")
+                for v in variants:
+                    if isinstance(v, dict):
+                        v["title"] = optimize_title(v.get("title", ""))
+                        print(f"   [{v.get('type', 'Variant')}] {v['title']}")
             print(f"✅ Groq fallback succeeded using {model_name}.")
             return data
         except Exception as e:
@@ -487,6 +517,12 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     
     High-CTR Packaging Rules (CRITICAL):
     - "title": 42-60 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). NEVER use generic "X Mystery #shorts" templates or overuse the word "Mystery".
+    - "title_variants": Provide 3 distinct high-CTR title variations for YouTube Studio A/B testing:
+      [
+        {"type": "Curiosity Gap", "title": "... #Shorts"},
+        {"type": "Metric/Urgency", "title": "... #Shorts"},
+        {"type": "Shock Fact", "title": "... #Shorts"}
+      ]
     - "thumbnail_text": 2 to 4 ultra-short, shocking UPPERCASE words ONLY (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). Never write a full sentence.
     - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords + an open curiosity loop that makes viewers watch instead of spoiling the twist.
     - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#DeepSea", "#ScienceFacts"]).
@@ -497,7 +533,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     Monetization, Demand & Engagement:
     - "affiliate_keyword": A generic 1-2 word product search term related to this topic (e.g., "telescope", "night vision").
     - "cta_question": A polarizing, debate-sparking question for viewers to answer in the comments (drives comment velocity & algorithm push).
-    - "pinned_comment": A short 1-sentence pinned comment asking that debate question + teasing the next video.
+    - "pinned_comment": A high-polarization curiosity-gap question ending with an open debate prompt designed to trigger replies (e.g., "Did scientists just stumble on something natural, or a phenomenon being covered up? Drop your theory below 👇 (Part 2 soon)").
     - "poll_question": A highly debatable question about this topic for a Community Tab Poll.
     - "poll_options": An array of 3 short possible answers.
 
@@ -511,6 +547,11 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
       "video_queries": ["...", "...", "...", "...", "...", "...", "...", "..."],
       "image_prompts": ["...", "...", "...", "...", "...", "...", "...", "..."],
       "title": "...",
+      "title_variants": [
+        {{"type": "Curiosity Gap", "title": "..."}},
+        {{"type": "Metric/Urgency", "title": "..."}},
+        {{"type": "Shock Fact", "title": "..."}}
+      ],
       "thumbnail_text": "...",
       "tags": ["#Shorts", "#Tag2", "#Tag3"],
       "seo_tags": ["keyword phrase 1", "keyword phrase 2", "..."],
@@ -553,6 +594,13 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
 
                 data = extract_json_object(raw_text)
                 data["title"] = optimize_title(data.get("title", ""))
+                variants = data.get("title_variants")
+                if variants and isinstance(variants, list):
+                    print("📊 CineMind A/B Title Candidates:")
+                    for v in variants:
+                        if isinstance(v, dict):
+                            v["title"] = optimize_title(v.get("title", ""))
+                            print(f"   [{v.get('type', 'Variant')}] {v['title']}")
                 if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
                     with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
                 return data
@@ -1138,14 +1186,25 @@ def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times
         frame = get_frame(t)
         abs_t = start_time + t
         progress = t / max(duration, 0.01)
-        scale = 1.0 + 0.04 * progress
+        
+        # CineMind Professional Ken-Burns Push-In (smooth documentary ease curve)
+        smooth_ease = 0.5 * (1.0 - math.cos(progress * math.pi))
+        scale = 1.0 + 0.07 * smooth_ease
+        
+        h, w = frame.shape[:2]
+        drift_x = int(w * 0.010 * math.sin(smooth_ease * math.pi))
+        drift_y = int(h * 0.012 * smooth_ease)
+        
         for imp_t in impacts:
             if imp_t <= abs_t <= imp_t + 0.28:
-                scale += 0.08 * (1.0 - (abs_t - imp_t) / 0.28)
+                delta = abs_t - imp_t
+                scale += 0.08 * math.exp(-delta * 10.0) * math.cos(delta * 16.0)
                 break
-        if scale > 1.002:
-            h, w = frame.shape[:2]
+                
+        if scale > 1.002 or drift_x != 0 or drift_y != 0:
             M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), 0.0, scale)
+            M[0, 2] += drift_x
+            M[1, 2] += drift_y
             frame = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
         # Apply CineMind Department D thematic film grade
         return apply_cinematic_color_grade(frame, color_palette)
@@ -1309,9 +1368,12 @@ def assemble_video(dynamic_sfx_map, brief=None):
         # Center the text directly in the viewer's focal path
         txt_clip = ImageClip(temp_img_path, transparent=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
         
-        # Apply the "Editor's Pop": A mathematically calculated zoom-in effect that snaps into place
-        txt_clip = txt_clip.resize(lambda t: max(1.0, 1.2 - (t * 4))) 
-        
+        # CineMind Elastic Pop: Snappy viral bounce for opening hook words and impact terms
+        if i < 3 or impact:
+            txt_clip = txt_clip.resize(lambda t: max(1.0, 1.0 + 0.25 * math.exp(-max(0.0, t) * 12.0) * math.cos(max(0.0, t) * 18.0)))
+        else:
+            txt_clip = txt_clip.resize(lambda t: max(1.0, 1.0 + 0.12 * math.exp(-max(0.0, t) * 14.0)))
+
         if impact and has_sfx: 
             audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
             
@@ -1324,6 +1386,8 @@ def assemble_video(dynamic_sfx_map, brief=None):
         text_clips.insert(0, thumb_clip.set_start(0))
 
     final_audio = CompositeAudioClip(audio_tracks)
+    # CineMind Zero-Gap Loop: Smooth micro-crossfade to prevent digital click when player loops
+    final_audio = final_audio.fx(afx.audio_fadein, 0.05).fx(afx.audio_fadeout, 0.05)
     extra_layers = [retention_bar]
     watermark = get_watermark_clip(voice_audio.duration)
     if watermark:
@@ -1546,7 +1610,8 @@ def repost_via_zernio(video_file, data):
 
         post_url = base64.b64decode("aHR0cHM6Ly96ZXJuaW8uY29tL2FwaS92MS9wb3N0cw==").decode("utf-8")
         hashtags_str = build_description_hashtags(data.get("tags", []))
-        social_caption = f"{data.get('title', '')}\n\n{data.get('description', '')}\n\n{hashtags_str}".strip()[:2200]
+        viral_cloud = " ".join(MANDATORY_VIRAL_HASHTAGS)
+        social_caption = f"{data.get('title', '')}\n\n{data.get('description', '')}\n\n{hashtags_str}\n\n{viral_cloud}".strip()[:2200]
         payload = {
             "content": social_caption,
             "mediaItems": [{"type": "video", "url": url}],
