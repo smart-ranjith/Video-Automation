@@ -23,6 +23,15 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import base64
 from ai_render_engine import ProceduralAIVideoGenerator, AIVideoEngine
+from cinemind_engine import (
+    CreativeBrief,
+    determine_creative_direction,
+    build_editorial_footage_log,
+    apply_cinematic_color_grade,
+    get_word_color_hierarchy,
+    download_theme_matched_bgm,
+    review_complete_film,
+)
 
 # --- 1. SETUP & SECRETS ---
 try:
@@ -467,6 +476,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
 
     prompt = f"""
     Search the web for high-demand, trending unsolved mysteries, bizarre scientific discoveries, deep-sea/space anomalies, or shocking historical oddities with massive mainstream curiosity right now.
+    CRITICAL AUDIENCE PREFERENCE (Channel Telemetry): Earth/deep-ocean contradictions, bizarre atmospheric events, and counter-intuitive geological/physics discoveries perform 10x higher than abstract UFO queries. Prioritize concrete real-world anomalies.
     Write an optimized 22-28 second YouTube Shorts script (55-75 spoken words) in English. Zero filler, maximum curiosity and retention.
     {avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
     
@@ -552,6 +562,9 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                 if "404" in err_str or "NOT_FOUND" in err_str:
                     break  # Don't burn retries on a retired/non-existent model
                 if "429" in err_str or "503" in err_str:
+                    if "PerDay" in err_str or "per day" in err_str or "retry in" in err_str:
+                        print("ℹ️ Gemini daily quota exhausted; switching immediately to Groq fallback...")
+                        break
                     # Exponential backoff per Google's own troubleshooting guidance -
                     # 15s, 45s, 90s instead of a flat 45s every time.
                     time.sleep([15, 45, 90][attempt])
@@ -980,9 +993,12 @@ def generate_ai_thumbnail(title, text_hook="", visual_theme="", out_path="thumbn
     except Exception as e: 
         print(f"⚠️ Thumbnail generation failed: {e}")
 
-def download_sfx():
+def download_sfx(brief=None):
     audio_api = base64.b64decode("aHR0cHM6Ly9waXhhYmF5LmNvbS9hcGkvYXVkaW8v").decode("utf-8")
-    if not os.path.exists("background_music.mp3"):
+    bgm_downloaded = False
+    if brief:
+        bgm_downloaded = download_theme_matched_bgm(brief, PIXABAY_API_KEY, "background_music.mp3")
+    if not bgm_downloaded and not os.path.exists("background_music.mp3"):
         res = requests.get(audio_api, params={"key": PIXABAY_API_KEY, "q": "cinematic ambient"})
         if res.status_code == 200 and res.json().get("hits"): safe_download(random.choice(res.json()["hits"])["audio"], "background_music.mp3", 20000)
     if not os.path.exists("whoosh.mp3"):
@@ -1091,14 +1107,14 @@ def discover_media_scenes(media_dir="media"):
     return [by_idx[i] for i in sorted(by_idx)]
 
 
-def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times=None, fps=24):
-    """Cover-fit a stock MP4 to 1080x1920 vertical 9:16 with audio-reactive kinetic punch."""
+def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times=None, fps=24, color_palette="deep_ocean_teal", usable_start=None):
+    """Cover-fit a stock MP4 to 1080x1920 vertical 9:16 with CineMind two-stage color grade and audio-reactive punch."""
     import cv2
     src = VideoFileClip(video_path).without_audio()
     opened_handles = [src]
     src_dur = float(src.duration or 0.0)
     if src_dur > duration + 0.8:
-        offset = min(src_dur - duration, src_dur * 0.2)
+        offset = usable_start if (usable_start is not None and usable_start + duration <= src_dur) else min(src_dur - duration, src_dur * 0.2)
         trimmed = src.subclip(offset, offset + duration)
     elif 0.1 < src_dur < duration:
         trimmed = vfx.loop(src, duration=duration).set_duration(duration)
@@ -1131,14 +1147,15 @@ def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times
             h, w = frame.shape[:2]
             M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), 0.0, scale)
             frame = cv2.warpAffine(frame, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-        # Match cinematic contrast grade & slightly moody exposure of AI scenes
-        return np.clip((frame.astype(np.float32) - 127.0) * 1.06 + 123.0, 0, 255).astype(np.uint8)
+        # Apply CineMind Department D thematic film grade
+        return apply_cinematic_color_grade(frame, color_palette)
 
     return cropped.fl(kinetic_grade).set_fps(fps).set_duration(duration), opened_handles
 
 
-def assemble_video(dynamic_sfx_map):
-    print("\n🎬 Assembling cinematic video (Hybrid Stock Footage + Procedural AI Motion Engine)...")
+def assemble_video(dynamic_sfx_map, brief=None):
+    print("\n🎬 Assembling cinematic video (CineMind Autonomous Video Editor Engine)...")
+    brief = brief or determine_creative_direction({"visual_theme": "cinematic"})
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
     opened_video_handles = [voice_audio]
@@ -1161,6 +1178,10 @@ def assemble_video(dynamic_sfx_map):
     if not media_files:
         raise FileNotFoundError("No media/clip_*.mp4 or media/clip_*.jpg files found for video assembly.")
     fallback_images = [p for p in media_files if p.endswith(".jpg")]
+    
+    # CineMind Department A: Professional Footage Review & Shot Logging
+    footage_log = build_editorial_footage_log(media_files, brief)
+    footage_by_path = {e.path: e for e in footage_log}
     
     # 1. Parse the data structure to find natural sentence boundaries
     sentence_boundaries = []
@@ -1195,10 +1216,19 @@ def assemble_video(dynamic_sfx_map):
 
         # 3. Use real HD stock video when available, or AI MiDaS 3D parallax for still scenes
         clip = None
+        log_entry = footage_by_path.get(media_path)
+        usable_start = log_entry.usable_start if log_entry else None
+
         if media_path.endswith(".mp4"):
             try:
                 vid_clip, handles = _prepare_stock_video_clip(
-                    media_path, duration=clip_dur, start_time=current_time, impact_times=impact_timestamps, fps=24
+                    media_path,
+                    duration=clip_dur,
+                    start_time=current_time,
+                    impact_times=impact_timestamps,
+                    fps=24,
+                    color_palette=brief.color_palette,
+                    usable_start=usable_start,
                 )
                 opened_video_handles.extend(handles)
                 clip = vid_clip.set_start(current_time)
@@ -1211,7 +1241,12 @@ def assemble_video(dynamic_sfx_map):
                     for alt in alt_mp4s:
                         try:
                             vid_clip, handles = _prepare_stock_video_clip(
-                                alt, duration=clip_dur, start_time=current_time, impact_times=impact_timestamps, fps=24
+                                alt,
+                                duration=clip_dur,
+                                start_time=current_time,
+                                impact_times=impact_timestamps,
+                                fps=24,
+                                color_palette=brief.color_palette,
                             )
                             opened_video_handles.extend(handles)
                             clip = vid_clip.set_start(current_time)
@@ -1228,7 +1263,8 @@ def assemble_video(dynamic_sfx_map):
                     start_time=current_time,
                     impact_times=impact_timestamps,
                 ).to_clip()
-                clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(safe_color_grade).set_start(current_time)
+                palette = brief.color_palette
+                clip = AIVideoEngine.apply_ai_flicker(warped_clip).fl(lambda gf, t: apply_cinematic_color_grade(safe_color_grade(gf, t), palette)).set_start(current_time)
             else:
                 clip = ColorClip(size=(1080, 1920), color=(10, 14, 22)).set_duration(clip_dur).set_start(current_time)
         
@@ -1261,10 +1297,9 @@ def assemble_video(dynamic_sfx_map):
             
         impact = is_high_impact(clean_text)
         
-        # Word-level visual hierarchy (Bigger and brighter for high-impact words)
+        # CineMind Department D: Word-level visual & semantic hierarchy
         size = 145 if impact else 120
-        fill = (0, 255, 255) if impact else (255, 255, 255) # Cyan for impact, White for normal
-        depth_col = (0, 100, 100) if impact else (0, 0, 0)
+        fill, depth_col = get_word_color_hierarchy(clean_text)
         
         word_array = render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col)
         
@@ -1322,6 +1357,12 @@ def assemble_video(dynamic_sfx_map):
                 "-ar", "48000",
             ]
         )
+        # CineMind Department E: Supervision & Automated Quality Assurance
+        qa_report = review_complete_film("final_short.mp4", expected_duration=voice_audio.duration)
+        if not qa_report.editorially_approved:
+            print(f"⚠️ CineMind QA flagged issues: {qa_report.warnings}")
+        else:
+            print(f"✅ CineMind Editorial Approval Granted (A/V delta: {qa_report.duration_match_delta}s, black frames: {qa_report.black_frame_count})")
     finally:
         final.close()
         for h in opened_video_handles:
@@ -1559,6 +1600,25 @@ def repost_via_zernio(video_file, data):
                 return False
 
             # Report the REAL per-platform outcome, with the live URL as actual proof
+            # If Instagram reports code 9007 ('still processing the media'), retry polling for 3 more cycles
+            for _retry in range(3):
+                has_pending_ig = any(
+                    e.get("platform") == "instagram" and
+                    e.get("status") != "published" and
+                    ("processing the media" in str(e.get("errorMessage", "")) or e.get("platformError", {}).get("code") == 9007)
+                    for e in final_post.get("platforms", [])
+                )
+                if not has_pending_ig:
+                    break
+                print("   ⏳ Instagram is still ingesting media on Meta's end, waiting 20s for final status...")
+                time.sleep(20)
+                try:
+                    s_ig = requests.get(status_url, headers=headers, timeout=30)
+                    if s_ig.status_code == 200:
+                        final_post = s_ig.json().get("post", s_ig.json())
+                except Exception:
+                    pass
+
             any_success = False
             for entry in final_post.get("platforms", []):
                 plat = entry.get("platform", "?")
@@ -1568,9 +1628,6 @@ def repost_via_zernio(video_file, data):
                     print(f"  ✅ {plat}: published - {plat_url}")
                     any_success = True
                 else:
-                    # Print the FULL raw entry rather than guessing a specific field
-                    # name for the error - last time this guessed wrong ("error")
-                    # and printed "no further detail", hiding the real reason.
                     print(f"  ❌ {plat}: {plat_status} - full detail: {entry}")
 
             if any_success:
@@ -1702,6 +1759,9 @@ async def main():
         viewer_requests=viewer_requests,
     )
     content["_channel_tags"] = viral_tags
+    # CineMind Department B: Formulate the structured creative brief
+    brief = determine_creative_direction(content)
+
     await generate_audio_and_timestamps(content["script"])
     download_visual_media(
         content["image_prompts"],
@@ -1716,11 +1776,13 @@ async def main():
         visual_theme=content.get("visual_theme", "")
     )
     
-    download_sfx()
+    # CineMind Department D: Source fresh theme-matched soundtrack & dynamic sound effects
+    download_sfx(brief=brief)
     dynamic_sfx_map = download_dynamic_sfx(content.get("sfx_cues", []))
     save_community_post(content)
     
-    assemble_video(dynamic_sfx_map)
+    # CineMind Departments A, C, D, E: Assemble timeline, grade, format kinetic typography & review
+    assemble_video(dynamic_sfx_map, brief=brief)
     
     vid_id, aff_link = upload_to_youtube("final_short.mp4", content, credentials)
     if vid_id:
