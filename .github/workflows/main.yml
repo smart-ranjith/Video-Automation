@@ -3,10 +3,11 @@ name: Autonomous YouTube Shorts Factory
 on:
   schedule:
     # Dual-Peak Algorithmic Strategy (Buffer-aligned for maximum views & subscriber velocity):
-    # 1) 06:00 UTC = 11:30 AM IST (Pre-lunch wave & daytime leisure, evening US West Coast)
-    # 2) 11:30 UTC = 5:00 PM IST (90-min buffer before India prime evening 6:30-9PM peak + US East Coast morning wake-up)
-    - cron: '0 6 * * *'    # Daily at 11:30 AM IST
-    - cron: '30 11 * * *'  # Daily at 5:00 PM IST
+    # Using off-peak minutes (:45, :15) to completely avoid GitHub's top-of-hour (:00) scheduler queue congestion.
+    # 1) 05:45 UTC = 11:15 AM IST (Generates & publishes by ~11:35 AM IST for midday/lunch peak)
+    # 2) 11:15 UTC = 4:45 PM IST  (Generates & publishes by ~5:05 PM IST, prime 90-min buffer before 6:30-9PM evening surge)
+    - cron: '45 5 * * *'
+    - cron: '15 11 * * *'
   push:
     branches: [main]
   workflow_dispatch:        # manual trigger from GitHub Actions UI
