@@ -47,6 +47,7 @@ jobs:
           pip install --prefer-binary -r requirements.txt
           
       - name: Run Video Generator Engine
+        timeout-minutes: 35
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}

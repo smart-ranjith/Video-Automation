@@ -99,6 +99,7 @@ GEMINI_MODELS = [
 
 GROQ_MODELS = [
     "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
 ]
@@ -404,6 +405,7 @@ def generate_text_with_fallback(prompt, temperature=0.8):
                         "model": model_name,
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": temperature,
+                        "max_tokens": 1000,
                     },
                     timeout=30,
                 )
@@ -450,19 +452,38 @@ def generate_script_via_groq_fallback(prompt, tags_string):
     for model_name in GROQ_MODELS:
         try:
             print(f"🧠 Falling back to Groq ({model_name}) for script generation...")
+            payload = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": full_prompt}],
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "response_format": {"type": "json_object"},
+            }
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": full_prompt}],
-                    "temperature": 0.9,
-                    "response_format": {"type": "json_object"},
-                },
-                timeout=60,
+                json=payload,
+                timeout=90,
             )
             if r.status_code != 200:
                 print(f"⚠️ Groq fallback ({model_name}) failed: {r.status_code} - {r.text[:300]}")
+                # If json_validate_failed or other 400 format error, retry without json_object constraint
+                if "json_validate_failed" in r.text or r.status_code == 400:
+                    print(f"🔄 Retrying Groq ({model_name}) with max_tokens 4096 without json_object constraint...")
+                    retry_payload = {
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": full_prompt + "\n\nCRITICAL: Provide ONLY valid JSON inside ```json ... ``` codeblock. Do not include extra commentary."}],
+                        "temperature": 0.7,
+                        "max_tokens": 4096,
+                    }
+                    r = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                        json=retry_payload,
+                        timeout=90,
+                    )
+            if r.status_code != 200:
+                print(f"⚠️ Groq fallback ({model_name}) final attempt failed: {r.status_code} - {r.text[:300]}")
                 continue
             raw_text = r.json()["choices"][0]["message"]["content"]
             data = extract_json_object(raw_text)
