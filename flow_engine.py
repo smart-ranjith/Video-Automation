@@ -54,6 +54,9 @@ def get_flow_status():
             json_str = stdout[json_start : json_end + 1]
             data = json.loads(json_str)
             is_connected = bool(data.get("extensionConnected") and data.get("loggedIn"))
+            layout = data.get("flowLayout", "")
+            if is_connected and layout == "narrow":
+                logger.warning("⚠️ Google Flow window is NARROW (mobile layout). Please MAXIMIZE the Flow window in Chrome for full-quality rendering!")
             return is_connected, data, ""
         return False, {}, f"Unable to parse status JSON: {stdout[:200]}"
     except Exception as e:
