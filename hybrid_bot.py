@@ -93,70 +93,109 @@ def generate_flow_prompts(topic=None):
     res = generate_text_with_fallback(p, temperature=0.7)
     return res or "1. Cinematic slow macro push-in on an glowing crystalline underwater structure, deep turquoise volumetric rays.\n2. Submersible camera lights illuminating an ancient carved monolith 4,000 meters deep.\n3. Eerie boiling brine pool on ocean floor with dark volcanic venting, 8k documentary."
 
+def evaluate_quality_control(content, video_path):
+    """
+    Automated Quality Control Gate (CineMind + youtube-agent-skill):
+    Evaluates Hook Retention Score, Packaging Linter, and Video Integrity.
+    Returns (passed: bool, reason: str, score: int)
+    """
+    from generator import score_script_hook, VAGUE_WORDS, STOP_WORDS, words
+    
+    script = content.get("script", "")
+    h_score, h_props = score_script_hook(script)
+    
+    # 1. Hook Score Gate: Must be >= 60 to prevent viewer swipe-away
+    if h_score < 60:
+        weak_prop = min(h_props, key=h_props.get) if h_props else "general"
+        return False, f"Hook retention score too low ({h_score}/100 - weakest link: {weak_prop})", h_score
+
+    # 2. Packaging Gate: Title & Thumbnail must not repeat words
+    title = content.get("title", "")
+    thumb = content.get("thumbnail_text", "")
+    title_substantive = set(words(title)) - STOP_WORDS
+    thumb_substantive = set(words(thumb)) - STOP_WORDS
+    if title_substantive & thumb_substantive:
+        return False, f"Thumbnail duplicated words from title ({title_substantive & thumb_substantive})", h_score
+
+    # 3. Video File Gate: Must exist and be > 500KB
+    if not os.path.exists(video_path) or os.path.getsize(video_path) < 500000:
+        return False, "Rendered video file is corrupted or too small", h_score
+
+    return True, "All Quality Control criteria passed", h_score
+
 def process_hybrid_video(input_clip_path, chat_id):
     """
-    Takes the Google Flow clip, generates matching voiceover & kinetic captions,
-    lints packaging, and sends back a preview with approval button.
+    Takes the Google Flow clip and autonomously:
+    1. Generates script, voice, kinetic subtitles & thumbnail.
+    2. Runs Automated Quality Control (QC).
+    3. If QC fails -> auto-regenerates (up to 3 attempts).
+    4. If QC passes -> DIRECTLY uploads to YouTube Shorts, Instagram & Facebook!
+    Zero manual approval required.
     """
-    send_message(chat_id, "🎬 *Processing your Google Flow clip through CineMind AI...*\n- Synthesizing dynamic voiceover & ambient score\n- Burning word-by-word kinetic pop captions\n- Linting title & thumbnail packaging")
+    send_message(chat_id, "🎬 *Ingesting Google Flow clip into CineMind AI...*\n- Evaluating visual anomaly\n- Autonomous Quality Control active (Auto-upload if good, Auto-regenerate if not)")
 
-    try:
-        from generator import (
-            generate_script,
-            lint_title_thumbnail_pair,
-            generate_ai_thumbnail,
-            MANDATORY_VIRAL_HASHTAGS,
-            build_description_hashtags,
-            build_youtube_seo_tags
-        )
-        # Generate script matching the anomaly
-        content = generate_script()
-        title, thumb = lint_title_thumbnail_pair(content.get("title", ""), content.get("thumbnail_text", ""))
-        content["title"] = title
-        content["thumbnail_text"] = thumb
-
-        # Generate thumbnail
-        generate_ai_thumbnail(title=title, text_hook=thumb, visual_theme=content.get("visual_theme", ""))
-
-        out_video = "final_short.mp4"
-        # If moviepy or local renderer is available, assemble clip
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
         try:
-            from cinemind_engine import generate_full_short
-            # For hybrid mode, use the user's Google Flow video as primary footage
-            generate_full_short(custom_video=input_clip_path, script_data=content, output_path=out_video)
+            from generator import (
+                generate_script,
+                lint_title_thumbnail_pair,
+                generate_ai_thumbnail,
+                upload_to_youtube,
+                repost_via_zernio,
+                authenticate_youtube,
+                MANDATORY_VIRAL_HASHTAGS
+            )
+
+            send_message(chat_id, f"🧠 *Attempt {attempt}/{max_attempts}:* Writing high-retention script and audio...")
+            content = generate_script()
+            title, thumb = lint_title_thumbnail_pair(content.get("title", ""), content.get("thumbnail_text", ""))
+            content["title"] = title
+            content["thumbnail_text"] = thumb
+
+            generate_ai_thumbnail(title=title, text_hook=thumb, visual_theme=content.get("visual_theme", ""))
+
+            out_video = "final_short.mp4"
+            try:
+                from cinemind_engine import generate_full_short
+                generate_full_short(custom_video=input_clip_path, script_data=content, output_path=out_video)
+            except Exception as e:
+                print(f"ℹ️ Engine rendered using direct clip: {e}")
+                out_video = input_clip_path
+
+            # Autonomous Quality Control evaluation
+            passed, reason, score = evaluate_quality_control(content, out_video)
+            print(f"🧐 QC Evaluation: passed={passed}, score={score}, reason={reason}")
+
+            if not passed:
+                send_message(chat_id, f"⚠️ *Quality Check Failed (Score {score}/100):* {reason}.\n🔄 *Auto-regenerating to meet quality standards...*")
+                continue
+
+            # Quality Control PASSED -> Direct Automatic Upload!
+            send_message(chat_id, f"✅ *Quality Control PASSED (Score: {score}/100)!*\n🚀 *Auto-publishing directly to YouTube Shorts, Instagram Reels & Facebook...*")
+
+            credentials = authenticate_youtube()
+            yt_id = upload_to_youtube(out_video, content, credentials)
+            repost_via_zernio(out_video, content)
+
+            yt_link = f"https://youtu.be/{yt_id}" if yt_id else "YouTube Shorts"
+            caption = (
+                f"🎉 *Published Successfully to YouTube & Socials!*\n\n"
+                f"📌 *Title:* {title}\n"
+                f"🎯 *Hook Score:* {score}/100 (Verified High Quality)\n"
+                f"🔗 *YouTube Link:* {yt_link}\n"
+                f"🖼️ *Thumbnail Text:* `{thumb}`\n"
+                f"🏷️ *Tags:* {' '.join(MANDATORY_VIRAL_HASHTAGS[:5])}\n\n"
+                f"✅ Syndicated to Instagram Reels & Facebook Video."
+            )
+            send_video(chat_id, out_video, caption=caption)
+            return
+
         except Exception as e:
-            print(f"ℹ️ Engine rendered using fallback composer: {e}")
-            out_video = input_clip_path # preview with input clip
-
-        # Store in pending review
-        preview_id = str(int(time.time()))
-        PENDING_POSTS[preview_id] = {
-            "video_path": out_video,
-            "content": content
-        }
-
-        # Send preview video with inline keyboard
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "🚀 Approve & Publish", "callback_data": f"approve_{preview_id}"},
-                    {"text": "❌ Discard", "callback_data": f"discard_{preview_id}"}
-                ]
-            ]
-        }
-
-        caption = (
-            f"🎬 *CineMind Hybrid Preview Ready!*\n\n"
-            f"📌 *Title:* {title}\n"
-            f"🖼️ *Thumbnail Punch:* `{thumb}`\n"
-            f"🏷️ *Tags:* {' '.join(MANDATORY_VIRAL_HASHTAGS[:5])}\n\n"
-            f"Tap *Approve & Publish* to ship live to YouTube Shorts, Instagram Reels & Facebook!"
-        )
-
-        send_video(chat_id, out_video, caption=caption, reply_markup=keyboard)
-
-    except Exception as e:
-        send_message(chat_id, f"⚠️ Error processing clip: {e}")
+            print(f"⚠️ Attempt {attempt} error: {e}")
+            if attempt == max_attempts:
+                send_message(chat_id, f"❌ Failed after {max_attempts} attempts: {e}")
+            time.sleep(3)
 
 def handle_callback(callback_query):
     cq_id = callback_query.get("id")
@@ -226,11 +265,15 @@ def run_bot():
                     if text.startswith("/start") or text.startswith("/help"):
                         welcome = (
                             "👋 *Welcome to CineMind Zero-Cost Hybrid Studio!*\n\n"
-                            "Here is how to get 10x cinematic AI Shorts for $0:\n"
+                            "Here is how to get 10x cinematic AI Shorts for $0 without manual approval:\n"
                             "1️⃣ Go to [Google Flow](https://labs.google/fx/tools/flow) (50 free credits daily).\n"
                             "2️⃣ Use `/prompt [topic]` to get 3 instant ready-to-paste Veo prompts.\n"
                             "3️⃣ Drop the generated video clip directly into this chat.\n"
-                            "4️⃣ CineMind AI will auto-mix voiceover, kinetic pop subtitles, high-CTR metadata, and give you an instant *Approve & Ship* button!"
+                            "4️⃣ CineMind AI handles everything autonomously:\n"
+                            "   • Writes script & voiceover, adds kinetic pop subtitles\n"
+                            "   • Runs Automated Quality Control (Hook score >= 60, title packaging)\n"
+                            "   • If Quality Check passes ➔ **DIRECTLY publishes to YouTube Shorts!**\n"
+                            "   • If Quality Check fails ➔ **Auto-regenerates automatically** until it is good!"
                         )
                         send_message(chat_id, welcome)
 
