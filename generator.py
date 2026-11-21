@@ -714,14 +714,13 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                 if "404" in err_str or "NOT_FOUND" in err_str:
                     break  # Don't burn retries on a retired/non-existent model
                 if "429" in err_str or "503" in err_str:
-                    if "PerDay" in err_str or "per day" in err_str or "retry in" in err_str:
-                        print("ℹ️ Gemini daily quota exhausted; switching immediately to Groq fallback...")
+                    if "PerDay" in err_str or "per day" in err_str or "retry in" in err_str or "limit exceeded" in err_str or "quota" in err_str.lower():
+                        print("ℹ️ Gemini quota/limit reached; switching immediately to Groq fallback...")
                         break
-                    # Exponential backoff per Google's own troubleshooting guidance -
-                    # 15s, 45s, 90s instead of a flat 45s every time.
-                    time.sleep([15, 45, 90][attempt])
+                    # Fast backoff: 5s, 15s, 30s instead of long stalls
+                    time.sleep([5, 15, 30][attempt])
                 else:
-                    time.sleep(5)
+                    time.sleep(3)
         print(f"ℹ️ Giving up on {model_name}, trying next model if available...")
 
     print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
@@ -1527,9 +1526,9 @@ def assemble_video(dynamic_sfx_map, brief=None):
             audio_codec="aac", 
             audio_fps=48000,
             threads=4, 
-            bitrate="12000k", 
+            bitrate="6000k", 
             ffmpeg_params=[
-                "-crf", "18", "-preset", "slow",
+                "-crf", "22", "-preset", "fast",
                 "-pix_fmt", "yuv420p",
                 "-profile:v", "high",
                 "-level", "4.2",
