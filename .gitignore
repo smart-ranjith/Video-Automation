@@ -10,3 +10,4 @@ words.json
 subtitles.srt
 __pycache__/
 *.pyc
+incoming_clips/
