@@ -180,6 +180,85 @@ def optimize_title(title):
     suffix = " #Shorts" if has_shorts or len(body) <= 57 else ""
     return f"{body}{suffix}".strip()
 
+VAGUE_WORDS = {
+    "amazing", "incredible", "insane", "crazy", "huge", "massive", "ultimate", "best",
+    "powerful", "secret", "revolutionary", "mindblowing", "epic", "perfect", "complete",
+    "everything", "unbelievable"
+}
+STOP_WORDS = {
+    "the", "a", "an", "of", "for", "to", "in", "on", "and", "or", "is", "are", "with",
+    "your", "you", "my", "i", "this", "that", "it", "how", "what", "why"
+}
+
+def words(t):
+    import re
+    return re.findall(r"[a-z0-9']+", (t or "").lower())
+
+def lint_title_thumbnail_pair(title, thumbnail_text):
+    """
+    Implements YouTube Packaging Linter (jakeschincariol/youtube-agent-skill):
+    The Title and Thumbnail are an inseparable packaging unit.
+    1. Thumbnail text must NEVER repeat non-stop words from the title (wastes 50% click surface).
+    2. Enforces 2-4 words MAX on the thumbnail at mobile feed size.
+    3. Removes vague buzzwords in favor of concrete tension and curiosity gaps.
+    """
+    import re
+    cleaned_title = optimize_title(title)
+    raw_thumb = re.sub(r"[^A-Za-z0-9\s$%-]", "", (thumbnail_text or "").upper()).strip()
+    thumb_words = [w for w in raw_thumb.split() if w.lower() not in VAGUE_WORDS]
+    
+    title_substantive = set(words(cleaned_title)) - STOP_WORDS
+    thumb_substantive = set(words(" ".join(thumb_words))) - STOP_WORDS
+    
+    shared = title_substantive & thumb_substantive
+    if shared:
+        print(f"⚠️ Packaging Linter: Thumbnail repeated words from title ({shared}). Adjusting...")
+        thumb_words = [w for w in thumb_words if w.lower() not in shared and w.lower() not in STOP_WORDS]
+    
+    if len(thumb_words) < 2:
+        high_tension_options = ["IT WASN'T EMPTY", "NEVER REPORTED", "NOT FROM EARTH", "ZERO SURVIVORS", "NOT A GLITCH", "4 MINS TOO LATE"]
+        for opt in high_tension_options:
+            opt_words = set(words(opt))
+            if not (opt_words & title_substantive):
+                thumb_words = opt.split()
+                break
+                
+    thumb = " ".join(thumb_words[:4]).upper()
+    return cleaned_title, thumb
+
+def score_script_hook(script_text):
+    """
+    Evaluates opening hook retention based on jakeschincariol/youtube-agent-skill:
+    Checks Specificity, Stakes, Curiosity, Brevity.
+    Weighted 60% mean and 40% weakest link so no single flaw leaks audience.
+    """
+    import re
+    first_sentence = (script_text or "").strip().split(".")[0]
+    w = words(first_sentence)
+    n = len(w)
+    if not w:
+        return 0, {}
+    
+    # Specificity: Numbers, concrete metrics, penalty for vague buzzwords
+    nums = len(re.findall(r"\b(\d[\d,.]*\s?(%|k|m|x|s|m|h)?|\$\d|\d+\s?(second|minute|hour|day|week|month|year)s?)\b", first_sentence, re.I))
+    vague = sum(1 for x in w if x in VAGUE_WORDS)
+    s_score = max(0, min(100, 34 + nums * 25 - vague * 15))
+    
+    # Stakes: Danger, anomaly, loss, cost
+    has_stakes = len(re.findall(r"\b(lose|lost|wasting|waste|quit|fail|broke|cost|risk|before|stop|never|die|dying|dead|forbidden|danger|threat|trap|anomaly)\b", first_sentence, re.I))
+    stake_score = max(0, min(100, 30 + has_stakes * 30))
+    
+    # Curiosity: Open loops, contradictions, why/how
+    has_curiosity = len(re.findall(r"\b(why|how|what|which|until|before|but|nobody|almost|except|reason|actually|beneath|hidden|secret|discovered)\b", first_sentence, re.I))
+    curiosity_score = max(0, min(100, 35 + has_curiosity * 20))
+    
+    # Brevity: 9-24 words is optimal for the first 3-5 seconds
+    brevity_score = 100 if (9 <= n <= 24) else (max(30, 100 - abs(16 - n) * 6))
+    
+    scores = {"SPECIFICITY": s_score, "STAKES": stake_score, "CURIOSITY": curiosity_score, "BREVITY": brevity_score}
+    verdict = round(0.6 * (sum(scores.values()) / len(scores)) + 0.4 * min(scores.values()))
+    return verdict, scores
+
 def build_description_hashtags(hashtags_list, max_hashtags=4):
     """Selects 3-5 clean #Hashtags (YouTube displays top 3 above title; too many dilutes reach)."""
     import re
@@ -487,7 +566,9 @@ def generate_script_via_groq_fallback(prompt, tags_string):
                 continue
             raw_text = r.json()["choices"][0]["message"]["content"]
             data = extract_json_object(raw_text)
-            data["title"] = optimize_title(data.get("title", ""))
+            data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+            h_score, h_props = score_script_hook(data.get("script", ""))
+            print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
             variants = data.get("title_variants")
             if variants and isinstance(variants, list):
                 print("📊 CineMind A/B Title Candidates:")
@@ -531,20 +612,20 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     Write an optimized 22-28 second YouTube Shorts script (55-75 spoken words) in English. Zero filler, maximum curiosity and retention.
     {avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
     
-    Script Structure Rules (Algorithm Optimization):
-    1. HOOK (First 3 seconds): Immediate pattern interrupt with concrete stakes, numbers, dates, or a shocking contradiction. NEVER start with "Did you know" or "Have you ever wondered".
+    Script Structure Rules (Retention Scorer Standard):
+    1. HOOK (First 3 seconds, 9-20 spoken words): Immediate pattern interrupt with concrete metrics, dates, or stakes. BANNED: never open with "Did you know", "Have you ever wondered", or "In this video". Must state a concrete figure, depth, date, or contradiction right away.
     2. ESCALATION BODY: Short, visual, high-tension sentences. Raise a second surprise halfway through so viewers don't swipe away.
     3. PAYOFF + SEAMLESS LOOP: Save the craziest twist for the final 3 seconds, and end mid-thought/phrase so it bleeds seamlessly back into the first word of the hook (driving >100% rewatch retention).
     
-    High-CTR Packaging Rules (CRITICAL):
-    - "title": 42-60 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). NEVER use generic "X Mystery #shorts" templates or overuse the word "Mystery".
+    High-CTR Packaging Rules (CRITICAL - YouTube Packaging Linter Standard):
+    - "title": 42-60 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). BANNED VAGUE WORDS: never use "insane", "incredible", "amazing", "crazy", "huge", "secret", "mindblowing", "epic".
     - "title_variants": Provide 3 distinct high-CTR title variations for YouTube Studio A/B testing:
       [
         {{"type": "Curiosity Gap", "title": "... #Shorts"}},
         {{"type": "Metric/Urgency", "title": "... #Shorts"}},
         {{"type": "Shock Fact", "title": "... #Shorts"}}
       ]
-    - "thumbnail_text": 2 to 4 ultra-short, shocking UPPERCASE words ONLY (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). Never write a full sentence.
+    - "thumbnail_text": 2 to 4 ultra-short UPPERCASE words ONLY (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). CRITICAL RULE: The thumbnail and title are an inseparable pair; NEVER repeat words from the title on the thumbnail! The thumbnail must state what the title does not.
     - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords + an open curiosity loop that makes viewers watch instead of spoiling the twist.
     - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#DeepSea", "#ScienceFacts"]).
     - "seo_tags": 10 to 15 high-demand YouTube Search keyword phrases (2-4 words each, NO # symbol, mixing specific topic queries + broad niche demand like "unsolved ocean mysteries", "weird science discoveries"). Incorporate relevant winning terms from: {tags_string}.
@@ -614,7 +695,9 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                     raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
 
                 data = extract_json_object(raw_text)
-                data["title"] = optimize_title(data.get("title", ""))
+                data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+                h_score, h_props = score_script_hook(data.get("script", ""))
+                print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
                 variants = data.get("title_variants")
                 if variants and isinstance(variants, list):
                     print("📊 CineMind A/B Title Candidates:")
@@ -644,7 +727,9 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
     fallback_data = generate_script_via_groq_fallback(prompt, tags_string)
     if fallback_data:
-        fallback_data["title"] = optimize_title(fallback_data.get("title", ""))
+        fallback_data["title"], fallback_data["thumbnail_text"] = lint_title_thumbnail_pair(fallback_data.get("title", ""), fallback_data.get("thumbnail_text", ""))
+        h_score, h_props = score_script_hook(fallback_data.get("script", ""))
+        print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
         if fallback_data.get("is_cliffhanger") and fallback_data.get("cliffhanger_setup"):
             with open(CLIFFHANGER_FILE, "w") as f: f.write(fallback_data["cliffhanger_setup"])
         return fallback_data
@@ -1856,9 +1941,13 @@ async def main():
     )
     
     # Corrected High-CTR Thumbnail generation (runs BEFORE video assembly and YouTube upload)
+    # Linted via jakeschincariol/youtube-agent-skill Packaging Linter: title and thumbnail never duplicate words
+    linted_title, linted_thumb = lint_title_thumbnail_pair(content.get("title", ""), content.get("thumbnail_text", ""))
+    content["title"] = linted_title
+    content["thumbnail_text"] = linted_thumb
     generate_ai_thumbnail(
         title=content.get("title", ""), 
-        text_hook=content.get("thumbnail_text", content.get("title", "")), 
+        text_hook=content.get("thumbnail_text", ""), 
         visual_theme=content.get("visual_theme", "")
     )
     
