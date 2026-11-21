@@ -1008,12 +1008,25 @@ def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
 
     for index, prompt in enumerate(image_prompts):
         mp4_path = f"media/clip_{index}.mp4"
-        if index == 0 and custom_clip_url and custom_clip_url.startswith("http"):
-            print(f"🎬 Ingesting custom Google Flow / Veo clip from: {custom_clip_url[:60]}...")
-            if safe_download(custom_clip_url, mp4_path, min_bytes=50000) and _is_valid_video_file(mp4_path):
-                print("✅ Successfully ingested custom Google Flow video as scene 0!")
-                video_count += 1
-                continue
+        if index == 0:
+            if custom_clip_url and custom_clip_url.startswith("http"):
+                print(f"🎬 Ingesting custom Google Flow / Veo clip from: {custom_clip_url[:60]}...")
+                if safe_download(custom_clip_url, mp4_path, min_bytes=50000) and _is_valid_video_file(mp4_path):
+                    print("✅ Successfully ingested custom Google Flow video as scene 0!")
+                    video_count += 1
+                    continue
+            else:
+                try:
+                    import flow_engine
+                    if flow_engine.is_flow_available():
+                        print("🎬 Google Flow Connector active! Generating Scene 0 using Google Veo AI...")
+                        flow_clip = flow_engine.generate_flow_video(prompt, duration=5, out_path=mp4_path)
+                        if flow_clip and _is_valid_video_file(mp4_path):
+                            print("✅ Successfully generated Scene 0 via Google Flow / Veo AI!")
+                            video_count += 1
+                            continue
+                except Exception as fe:
+                    print(f"ℹ️ Google Flow Scene 0 generation skipped/failed: {fe}")
 
         raw_query = (queries[index] if index < len(queries) else "").strip()
         fallback_words = " ".join(prompt.split()[:3])
@@ -1039,18 +1052,32 @@ def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
                 break
 
         if not got_video:
-            full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
             jpg_path = f"media/clip_{index}.jpg"
-            for _attempt in range(4):
-                if safe_download(
-                    f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}",
-                    jpg_path,
-                    20000,
-                ):
-                    image_count += 1
-                    print(f"   🎨 Scene {index}: custom AI visual fallback")
-                    break
-                time.sleep(2)
+            got_flow_scene = False
+            try:
+                import flow_engine
+                if flow_engine.is_flow_available():
+                    print(f"   🎨 Scene {index}: generating with Google Flow (Nano Banana)...")
+                    flow_img = flow_engine.generate_flow_image(f"{prompt}, {visual_theme}", out_path=jpg_path)
+                    if flow_img and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 10000:
+                        image_count += 1
+                        got_flow_scene = True
+                        print(f"   ✅ Scene {index}: Google Flow visual generated cleanly!")
+            except Exception as fe:
+                pass
+
+            if not got_flow_scene:
+                full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
+                for _attempt in range(4):
+                    if safe_download(
+                        f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}",
+                        jpg_path,
+                        20000,
+                    ):
+                        image_count += 1
+                        print(f"   🎨 Scene {index}: custom AI visual fallback")
+                        break
+                    time.sleep(2)
 
     print(f"✅ Media ready: {video_count} stock video clips + {image_count} AI parallax scenes.")
 
@@ -1134,15 +1161,28 @@ def _render_thumbnail_banner(lines, max_width=920):
 def generate_ai_thumbnail(title, text_hook="", visual_theme="", out_path="thumbnail.jpg"):
     print("🖼️ Painting Custom High-CTR AI Thumbnail...")
     try:
-        pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
         prompt = (
             f"Ultra-dramatic high-contrast focal close-up for {title}, {visual_theme}, "
             "cinematic rim lighting, glowing mysterious subject centered in lower two-thirds, "
             "clean dark negative space at top third, hyper-detailed, 8k, no text, no words, no watermark"
         )
-        url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}"
+        got_base = False
+        try:
+            import flow_engine
+            if flow_engine.is_flow_available():
+                print("   🖼️ Generating High-CTR Thumbnail Base with Google Flow (Nano Banana)...")
+                flow_thumb = flow_engine.generate_flow_image(prompt, out_path=out_path)
+                if flow_thumb and os.path.exists(out_path) and os.path.getsize(out_path) > 10000:
+                    got_base = True
+        except Exception as fe:
+            pass
+
+        if not got_base:
+            pol_api = base64.b64decode("aHR0cHM6Ly9pbWFnZS5wb2xsaW5hdGlvbnMuYWkvcHJvbXB0Lw==").decode("utf-8")
+            url = f"{pol_api}{urllib.parse.quote(prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}"
+            safe_download(url, out_path, min_bytes=20000)
         
-        if safe_download(url, out_path, min_bytes=20000):
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 10000:
             lines = _wrap_thumbnail_words(text_hook)
             if lines:
                 base_img = PIL.Image.open(out_path).convert("RGBA")

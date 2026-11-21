@@ -266,16 +266,42 @@ def run_bot():
                         welcome = (
                             "👋 *Welcome to CineMind Zero-Cost Hybrid Studio!*\n\n"
                             "Here is how to get 10x cinematic AI Shorts for $0 without manual approval:\n"
-                            "1️⃣ Go to [Google Flow](https://labs.google/fx/tools/flow) (50 free credits daily).\n"
-                            "2️⃣ Use `/prompt [topic]` to get 3 instant ready-to-paste Veo prompts.\n"
-                            "3️⃣ Drop the generated video clip directly into this chat.\n"
-                            "4️⃣ CineMind AI handles everything autonomously:\n"
-                            "   • Writes script & voiceover, adds kinetic pop subtitles\n"
-                            "   • Runs Automated Quality Control (Hook score >= 60, title packaging)\n"
+                            "🎬 *Autonomous Mode:* Send `/flow [topic]` ➔ Flow Connector will automatically generate the 9:16 Veo AI video scene directly from your Google Flow session, assemble the Short, run QC, and publish!\n\n"
+                            "📁 *Manual Upload Mode:* Drop any Google Flow / Veo video clip into this chat.\n"
+                            "📋 *Prompt Inspiration:* Use `/prompt [topic]` to get 3 instant ready-to-paste Veo prompts.\n\n"
+                            "✨ *Autonomous Pipeline:*\n"
+                            "   • Script & voiceover with kinetic pop subtitles\n"
+                            "   • Automated Quality Control (Hook score >= 60, title packaging)\n"
                             "   • If Quality Check passes ➔ **DIRECTLY publishes to YouTube Shorts!**\n"
                             "   • If Quality Check fails ➔ **Auto-regenerates automatically** until it is good!"
                         )
                         send_message(chat_id, welcome)
+
+                    elif text.startswith("/flow"):
+                        topic = text.replace("/flow", "").strip() or None
+                        send_message(chat_id, "🎨 *Connecting to Google Flow (Veo AI)...*\nPlease ensure your Flow browser window remains open and visible on screen!")
+                        try:
+                            import flow_engine
+                            if not flow_engine.is_flow_available():
+                                send_message(chat_id, "⚠️ Google Flow is not connected or logged in. Please ensure flow.google.com is open in Chrome with Flow Connector extension enabled.")
+                            else:
+                                flow_prompts = generate_flow_prompts(topic)
+                                # Take first prompt as scene seed
+                                prompt_seed = flow_prompts.strip().split("\n")[0]
+                                if "." in prompt_seed:
+                                    prompt_seed = prompt_seed.split(".", 1)[1].strip()
+
+                                send_message(chat_id, f"🎬 *Rendering 9:16 Veo Video on Flow:*\n_{prompt_seed[:90]}..._")
+                                dest = INCOMING_DIR / f"flow_{int(time.time())}.mp4"
+                                generated_clip = flow_engine.generate_flow_video(prompt_seed, duration=5, out_path=str(dest))
+
+                                if generated_clip and os.path.exists(generated_clip) and os.path.getsize(generated_clip) > 50000:
+                                    send_message(chat_id, "✅ *Veo Video Rendered Successfully!* Ingesting into CineMind AI pipeline...")
+                                    process_hybrid_video(str(dest), chat_id)
+                                else:
+                                    send_message(chat_id, "❌ Could not retrieve rendered video from Google Flow. Check your Flow browser window.")
+                        except Exception as e:
+                            send_message(chat_id, f"⚠️ Error in /flow generation: {e}")
 
                     elif text.startswith("/prompt"):
                         topic = text.replace("/prompt", "").strip() or None
