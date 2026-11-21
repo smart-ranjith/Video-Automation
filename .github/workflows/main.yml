@@ -10,7 +10,12 @@ on:
     - cron: '15 11 * * *'
   push:
     branches: [main]
-  workflow_dispatch:        # manual trigger from GitHub Actions UI
+  workflow_dispatch:        # manual trigger from GitHub Actions UI or mobile
+    inputs:
+      custom_clip_url:
+        description: 'URL to Google Flow / Custom Video Clip (optional)'
+        required: false
+        default: ''
 
 permissions:
   contents: write   # needed so the workflow can commit topic_history.json etc back to the repo
@@ -59,6 +64,9 @@ jobs:
           CHANNEL_WATERMARK_TEXT: ${{ secrets.CHANNEL_WATERMARK_TEXT }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CUSTOM_CLIP_URL: ${{ inputs.custom_clip_url }}
         run: |
           set -o pipefail
           python generator.py 2>&1 | tee generator_run.log

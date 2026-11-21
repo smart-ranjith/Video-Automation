@@ -1005,7 +1005,17 @@ def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
     video_count = 0
     image_count = 0
 
+    custom_clip_url = os.environ.get("CUSTOM_CLIP_URL", "").strip()
+
     for index, prompt in enumerate(image_prompts):
+        mp4_path = f"media/clip_{index}.mp4"
+        if index == 0 and custom_clip_url and custom_clip_url.startswith("http"):
+            print(f"🎬 Ingesting custom Google Flow / Veo clip from: {custom_clip_url[:60]}...")
+            if safe_download(custom_clip_url, mp4_path, min_bytes=50000) and _is_valid_video_file(mp4_path):
+                print("✅ Successfully ingested custom Google Flow video as scene 0!")
+                video_count += 1
+                continue
+
         raw_query = (queries[index] if index < len(queries) else "").strip()
         fallback_words = " ".join(prompt.split()[:3])
         search_candidates = [q for q in (raw_query, " ".join(raw_query.split()[:2]), fallback_words) if q]
@@ -1816,6 +1826,33 @@ def repost_via_zernio(video_file, data):
         print(f"⚠️ Zernio Syndication Exception: {e}")
     return False
 
+def send_telegram_notification(video_title, video_id, thumbnail_punch=""):
+    """Pings the user's private Telegram when a new video is published autonomously."""
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        return
+    yt_link = f"https://youtu.be/{video_id}"
+    msg = (
+        f"🎬 *New YouTube Short Published!*\n\n"
+        f"📌 *Title:* {video_title}\n"
+        f"🖼️ *Thumbnail Text:* `{thumbnail_punch}`\n"
+        f"🔗 *Watch Here:* {yt_link}\n\n"
+        f"✅ Syndicated to Instagram Reels & Facebook Video."
+    )
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+            timeout=15
+        )
+        if r.status_code == 200:
+            print("📲 Telegram publish notification delivered to your phone!")
+        else:
+            print(f"⚠️ Telegram notification status {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"⚠️ Telegram notification failed: {e}")
+
 def sanitize_theme_label(visual_theme, max_words=3, max_chars=40):
     """Gemini sometimes returns visual_theme as a full descriptive sentence
     instead of a short label (e.g. 'Dark, Unsettling Historical Reenactment
@@ -1971,6 +2008,7 @@ async def main():
                 pass
         youtube_client = build("youtube", "v3", credentials=credentials)
         add_video_to_themed_playlist(youtube_client, vid_id, content.get("visual_theme", ""))
+        send_telegram_notification(content.get("title", ""), vid_id, content.get("thumbnail_text", ""))
     repost_via_zernio("final_short.mp4", content)
 
 if __name__ == "__main__":
