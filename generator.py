@@ -429,10 +429,11 @@ def build_youtube_seo_tags(seo_tags, hashtags_list=None, channel_tags=None, max_
 def build_seo_description(data, hashtags_str, affiliate_block="", playlist_title=None):
     """
     Constructs a clean, high-CTR, search-indexed description without keyword stuffing:
-    1. First 150 chars: Primary search keywords & curiosity hook (visible in search snippets).
-    2. Session-Extending CTA: Points directly to themed playlist / next episode to boost session watch time.
-    3. Community Discussion: Polarizing debate question to spark comments.
-    4. 3-4 clean relevant hashtags (never a spammy wall).
+    1. First 150 chars: Primary search keywords & curiosity hook (optimized for 'Ask YouTube' AI Search).
+    2. Session-Extending CTA: Points directly to themed playlist to boost total watch time.
+    3. Hype Feature: Prompts viewers under 500k channels to use their weekly Hype points.
+    4. AI Transparency Disclosure: Follows 2024-2026 YouTube synthetic media guidelines.
+    5. Clean 3-4 hashtags (never a spammy wall).
     """
     desc_hook = (data.get("description") or "").strip()
     cta_q = (data.get("cta_question") or data.get("poll_question") or "").strip()
@@ -444,6 +445,13 @@ def build_seo_description(data, hashtags_str, affiliate_block="", playlist_title
     # Session-Extending Bridge: Keeps viewers in the viewing session
     playlist_ref = f"'{playlist_title}'" if playlist_title else "our channel playlists"
     parts.append(f"🎬 Watch next in this series: Explore {playlist_ref} for full deep dives & Part 2!")
+    
+    # 2025-2026 YouTube Hype Feature Integration (Multiplies reach for channels under 500k subs)
+    parts.append("⚡ Found this fascinating? Hit the 'Hype' button below to help push this discovery onto the regional leaderboard!")
+    
+    # YouTube Official Synthetic/AI Content Transparency Disclosure (Prevents shadow-suppression)
+    parts.append("🤖 AI Transparency: Altered or synthetic content. Visual and audio elements include AI generation for creative storytelling.")
+    
     parts.append("🔔 Subscribe to CineMind for daily 30-second mysteries & unexplained phenomena.")
     
     if affiliate_block:
@@ -773,6 +781,11 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     - "pinned_comment": A high-polarization curiosity-gap question ending with an open debate prompt designed to trigger replies (e.g., "Did scientists just stumble on something natural, or a phenomenon being covered up? Drop your theory below 👇 (Part 2 soon)").
     - "poll_question": A highly debatable question about this topic for a Community Tab Poll.
     - "poll_options": An array of 3 short possible answers.
+    - "localizations": Multi-language metadata for international YouTube expansion. Provide Spanish ("es") and Hindi ("hi") translations of the title and description:
+      {{
+        "es": {{"title": "... #Shorts", "description": "..."}},
+        "hi": {{"title": "... #Shorts", "description": "..."}}
+      }}
 
     Cinematic Sound Design:
     - "sfx_cues": Assign 2 or 3 sound effects to specific image clips. Provide the "clip_index" (0 to 7) and a 1-2 word "query" to search on Pixabay (e.g., "heartbeat", "thunder", "metal clank"). 
@@ -793,6 +806,10 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
       "tags": ["#Shorts", "#Tag2", "#Tag3"],
       "seo_tags": ["keyword phrase 1", "keyword phrase 2", "..."],
       "description": "...",
+      "localizations": {{
+        "es": {{"title": "... #Shorts", "description": "..."}},
+        "hi": {{"title": "... #Shorts", "description": "..."}}
+      }},
       "cta_question": "...",
       "pinned_comment": "...",
       "is_cliffhanger": true/false,
@@ -874,13 +891,30 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
 def save_community_post(data):
     print("📝 Generating Community Tab Poll asset...")
     try:
+        q = data.get('poll_question', 'What do you think actually happened?')
+        opts = data.get('poll_options', ['Natural Phenomenon', 'Classified Event', 'Unexplained Anomaly'])
+        short_title = data.get('title', '')
+        
+        poll_content = (
+            "📊 COMMUNITY TAB POLL (Ready to Copy & Paste)\n"
+            "--------------------------------------------------\n"
+            f"❓ QUESTION:\n{q}\n\n"
+            "🔘 OPTIONS:\n"
+        )
+        for opt in opts:
+            poll_content += f"  • {opt}\n"
+        poll_content += (
+            f"\n🔗 RELATED SHORT: {short_title}\n"
+            "--------------------------------------------------\n"
+            "💡 Pro-Tip: Image/text polls are pushed by YouTube directly to non-subscribers\n"
+            "on the Home feed! When people vote, YouTube begins recommending your channel's\n"
+            "videos into their feed.\n"
+        )
         with open("community_poll.txt", "w", encoding="utf-8") as f:
-            f.write(f"POLL QUESTION:\n{data.get('poll_question', 'What do you think?')}\n\n")
-            f.write("OPTIONS:\n")
-            for opt in data.get('poll_options', []):
-                f.write(f"- {opt}\n")
-        print("✅ Poll saved to 'community_poll.txt'")
-    except Exception: pass
+            f.write(poll_content)
+        print("✅ High-engagement Community Poll saved to 'community_poll.txt'")
+    except Exception as e:
+        print(f"⚠️ Community post save skipped: {e}")
 
 # --- 3. AUDIO & SFX SYNC ---
 def build_estimated_word_timestamps(text, total_duration):
@@ -1870,10 +1904,31 @@ def upload_to_youtube(video_file, data, credentials):
             "title": final_title,
             "description": full_description,
             "tags": youtube_tags,
+            "defaultLanguage": "en",
         },
         "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
     }
-    video_id = youtube.videos().insert(part="snippet,status", body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
+
+    # 2025-2026 YouTube Multi-Language Expansion: Attach Spanish & Hindi translations
+    localizations = data.get("localizations")
+    parts_list = ["snippet", "status"]
+    if localizations and isinstance(localizations, dict):
+        clean_loc = {}
+        for lang in ("es", "hi"):
+            if lang in localizations and isinstance(localizations[lang], dict):
+                loc_title = optimize_title(localizations[lang].get("title", ""))
+                loc_desc = (localizations[lang].get("description") or "").strip()
+                if loc_title and loc_desc:
+                    clean_loc[lang] = {
+                        "title": loc_title,
+                        "description": loc_desc[:4900]
+                    }
+        if clean_loc:
+            body["localizations"] = clean_loc
+            parts_list.append("localizations")
+            print(f"🌐 Attached multi-language localizations: {list(clean_loc.keys())}")
+
+    video_id = youtube.videos().insert(part=",".join(parts_list), body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
     print(f"✅ Success! YouTube Link: https://youtu.be/{video_id}")
     
     # Force direct thumbnail upload via API
@@ -1886,20 +1941,22 @@ def upload_to_youtube(video_file, data, credentials):
     return video_id, affiliate_link
 
 def post_auto_comment(video_id, script_text, affiliate_link, credentials, preset_comment=None):
-    print("💬 Posting monetized auto-comment...")
+    print("💬 Posting auto-comment (First-Hour Engagement Window & Hype Prompt)...")
     youtube = build("youtube", "v3", credentials=credentials)
     support_line = f"\n\n🔍 Support the channel: {affiliate_link}" if affiliate_link else ""
+    hype_line = "\n⚡ Hit the 'Hype' button below to help push this onto the leaderboard!"
     comment_text = (preset_comment or "").strip().strip('"')
     if not comment_text:
         comment_text = generate_text_with_fallback(
             f"Write ONE short, debate-sparking question (under 20 words) to pin in the YouTube comments for this script: {script_text}"
         ) or "What do you think actually happened here? Drop your theory below!"
+    full_comment = f"{comment_text}{hype_line}{support_line}"
     try:
         youtube.commentThreads().insert(
             part="snippet",
-            body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": f"{comment_text}{support_line}"}}}},
+            body={"snippet": {"videoId": video_id, "topLevelComment": {"snippet": {"textOriginal": full_comment}}}},
         ).execute()
-        print("✅ Monetized auto-comment posted!")
+        print("✅ First-hour engagement comment with Hype callout posted!")
     except Exception as e:
         print(f"⚠️ Auto-comment skipped: {e}")
 
