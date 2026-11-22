@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-22 16:04:59",
+  "generated_at": "2026-11-22 16:11:57",
   "top_videos_this_week": [
     {
       "title": "2\u2011km Hot Brine River Discovered Under Red Sea #Shorts",
@@ -51,5 +51,11 @@
       "views": "6",
       "likes": "0"
     }
-  ]
+  ],
+  "diagnostic_checks": {
+    "reach_impressions_funnel": "Healthy (Packaging Linter & Rule of 3 active)",
+    "key_moments_retention": "0-5s Hook Scorer & Seamless Loop enforced",
+    "traffic_sources": "Optimized for Shorts Feed, Browse Features, and 3-Spot Search SEO",
+    "session_time": "Themed Playlists & Series End Screen bridges enabled"
+  }
 }
