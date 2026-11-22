@@ -80,18 +80,18 @@ def download_telegram_file(file_id, dest_path):
 def generate_flow_prompts(topic=None):
     """Generates 3 cinematic, vertical (9:16) prompts tailored for Google Flow / Veo."""
     from generator import generate_text_with_fallback
-    niche_topic = topic or "deep-sea anomaly or unexplained geological discovery"
+    niche_topic = topic or "suspenseful true survival, chilling mystery anomaly, or dark psychology illusion"
     p = f"""
     Create 3 ultra-vivid, photorealistic, cinematic prompt descriptions to generate 5-second vertical (9:16) video clips in Google Flow (Veo).
     Topic: {niche_topic}
     Requirements for each prompt:
-    - Include specific lighting (e.g. volumetric god-rays, abyssal bioluminescence, moody amber rim light)
-    - Specify camera motion (e.g. slow cinematic push-in, macro pan, crane descent)
+    - Include specific lighting (e.g. volumetric god-rays, abyssal bioluminescence, moody amber rim light, deep ominous shadows)
+    - Specify camera motion (e.g. slow cinematic push-in, macro pan, crane descent, fast drone swoop)
     - Keep each under 40 words, hyper-realistic, 8k documentary style.
     Number them 1, 2, 3.
     """
     res = generate_text_with_fallback(p, temperature=0.7)
-    return res or "1. Cinematic slow macro push-in on an glowing crystalline underwater structure, deep turquoise volumetric rays.\n2. Submersible camera lights illuminating an ancient carved monolith 4,000 meters deep.\n3. Eerie boiling brine pool on ocean floor with dark volcanic venting, 8k documentary."
+    return res or "1. Cinematic slow macro push-in on an antique compass spinning erratically on a dark wooden table, warm amber rim light.\n2. Submersible floodlights cutting through pitch-black water illuminating a sunken ship's sealed hatch, 4,000 meters deep.\n3. Eerie abandoned concrete bunker hallway stretching into darkness with flickering fluorescent bulb, 8k documentary."
 
 def evaluate_quality_control(content, video_path):
     """

@@ -117,15 +117,11 @@ EVERGREEN_DEMAND_TAGS = [
 
 MANDATORY_VIRAL_HASHTAGS = [
     "#shorts",
-    "#youtubeshorts",
-    "#trending",
-    "#viral",
-    "#subscribe",
-    "#foryou",
-    "#foryoupage",
-    "#fyp",
-    "#explorepage",
-    "#youtube",
+    "#mystery",
+    "#mindblowing",
+    "#truestory",
+    "#curiosity",
+    "#reels",
 ]
 
 def load_topic_history():
@@ -481,7 +477,7 @@ def fetch_top_performing_titles(credentials, max_results=5):
 
 def fetch_high_reach_tags(credentials):
     print("🔍 Fetching tags from your highest-reach videos...")
-    fallback_tags = ["#ScienceMystery", "#SpaceMystery", "#Unexplained", "#ScienceFacts", "#Cosmos", "#EarthMystery", "#UnsolvedMysteries", "#AlienLife", "#Astrophysics", "#CosmicSecrets", "#NatureFacts", "#SpaceShorts", "#Shorts", "#DarkMatter", "#Universe", "#DeepEarth", "#Geology", "#PlanetEarth", "#SETI"]
+    fallback_tags = ["#Shorts", "#Mystery", "#Unexplained", "#TrueStory", "#Survival", "#PsychologyTricks", "#DarkPsychology", "#MindBlowing", "#Curiosity", "#Creepy", "#BizarreHistory", "#ForbiddenHistory"]
     try:
         youtube = build("youtube", "v3", credentials=credentials)
         search_res = youtube.search().list(part="id", forMine=True, type="video", order="viewCount", maxResults=5).execute()
@@ -657,7 +653,7 @@ def generate_script_via_groq_fallback(prompt, tags_string):
             print("🔎 Fetching live trend context via Tavily (Groq has no built-in search)...")
             r = requests.post("https://api.tavily.com/search", json={
                 "api_key": tavily_key,
-                "query": "viral mystery trends unsolved phenomena trending today",
+                "query": "trending viral mysteries dark psychology survival stories shocking true facts today",
                 "max_results": 5,
             }, timeout=30)
             if r.status_code == 200:
@@ -729,7 +725,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     print("🧠 Asking Gemini to scan live web trends and write the script...")
     
     if not dynamic_tags_list:
-        dynamic_tags_list = ["Shorts", "Science Mystery", "Unexplained Phenomena", "Space Mysteries"]
+        dynamic_tags_list = ["Shorts", "Mystery", "Unexplained", "TrueStory", "Survival", "PsychologyTricks", "DarkPsychology", "MindBlowing"]
         
     tags_string = ", ".join(dynamic_tags_list[:20])
 
@@ -750,30 +746,43 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
         os.remove(CLIFFHANGER_FILE)
 
     prompt = f"""
-    Search the web for high-demand, trending unsolved mysteries, bizarre scientific discoveries, deep-sea/space anomalies, or shocking historical oddities with massive mainstream curiosity right now.
-    CRITICAL AUDIENCE PREFERENCE (Channel Telemetry): Earth/deep-ocean contradictions, bizarre atmospheric events, and counter-intuitive geological/physics discoveries perform 10x higher than abstract UFO queries. Prioritize concrete real-world anomalies.
-    Write an optimized 22-28 second YouTube Shorts script (55-75 spoken words) in English. Zero filler, maximum curiosity and retention.
+    You are the Lead Creative Director and Retention Algorithm Engineer for a top-tier viral YouTube Shorts channel.
+    YOUR CORE MISSION: Drive massive Average Percentage Viewed (APV > 100%), binge sessions, and rapid subscriber growth through intense, addictive visual storytelling.
+    DO NOT write dry textbook facts, academic lectures, or encyclopedia summaries. Viewers swipe away from lectures in 1 second. Write a gripping, suspenseful 20-25 second narrative short (50-65 spoken words) built for maximum retention.
+
+    HIGH-RETENTION CONTENT NICHES (Pick ONE compelling, high-curiosity concept from these 4 viral categories):
+    1. Chilling Real Mysteries & Creepy True Stories: Bizarre disappearances, eerie deep-sea or abandoned vault discoveries, strange audio recordings, unexplainable historical events with atmospheric suspense (e.g., the ship found drifting with hot food on the table and zero crew, or the sound 3,000 miles deep that panicked oceanographers).
+    2. Dark Psychology & Brain Perception Glitches: Fascinating subconscious illusions, psychological tricks that manipulate human perception, visual brain glitches that make viewers rewatch or pause to test themselves (e.g., why your brain forgets when walking through a door, or the 3-second sensory illusion that breaks your vision).
+    3. High-Stakes True Survival & Impossible Feats: Unbelievable true survival stories, extreme human endurance against impossible odds, or brilliant real-life heists (e.g., the commercial diver trapped 3 days in an air bubble 100 feet underwater in total pitch black).
+    4. Forbidden Places & Restricted Secrets: Locations on Earth where human presence is strictly banned, guarded vaults, or hidden underground megastructures (e.g., the island guarded by gunboats where anyone who lands vanishes, or the secret chamber built into Mount Rushmore).
+
+    Write an optimized 20-25 second YouTube Shorts script (50-65 spoken words) in English. Zero filler, maximum curiosity and retention.
     {avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
     
-    Script Structure Rules (Retention Scorer Standard):
-    1. HOOK (First 3 seconds, 9-20 spoken words): Immediate pattern interrupt with concrete metrics, dates, or stakes. BANNED: never open with "Did you know", "Have you ever wondered", "Hey guys", "Welcome back", or "In this video". Must state a concrete figure, depth, date, or contradiction right away in the first sentence. State the primary search keyword phrase aloud in the first 15 seconds.
-    2. ESCALATION BODY: Short, visual, high-tension sentences. Cut dead air, repetition, and filler. Raise a second surprise halfway through so viewers don't swipe away.
-    3. PAYOFF + SEAMLESS LOOP: Save the craziest twist for the final 3 seconds. The final sentence MUST be an open thought or connective bridge that flows grammatically straight back into the very first word of the hook (driving >100% average percentage viewed). BANNED: never say "Thanks for watching", "See you next time", or "Like and subscribe" (deadly goodbye signals that kill retention).
+    Retention Algorithm Rules (Target: APV > 100%):
+    1. HOOK (0-3 seconds, words 1-15): Drop the viewer right into the middle of the crisis, impossibility, or paradox.
+       - Start with concrete numbers, minutes, stakes, or visual tension immediately in sentence 1.
+       - NEVER use opening greetings or polite questions: BANNED are "Did you know", "Have you ever wondered", "Hey guys", "Welcome back", "Today we talk about".
+       - State the primary search keyword phrase aloud within the first 12 seconds so YouTube's spoken auto-transcript indexes it.
+    2. ESCALATION BODY (3-18 seconds): Short, punchy, visual sentences. No dead air. Cut every adjective that doesn't advance the tension. Drop a second unexpected reveal or rising stake at second 10 to reset viewer attention before they can swipe.
+    3. THE PAYOFF (19-22 seconds): Deliver the shocking realization, jaw-dropping twist, or mind-bending result.
+    4. SEAMLESS LOOP BRIDGE (Final 3 seconds): The final sentence MUST be an open thought or connective bridge that flows grammatically straight back into the very first word of the hook without any awkward gap (creating an infinite seamless loop where viewers accidentally watch twice, pushing retention over 100%).
+    5. ZERO GOODBYE SIGNALS: Never say "Thanks for watching", "See you next time", "Like and subscribe", or "Follow for more". Goodbye phrases cause viewers to instantly swipe away before the video finishes.
     
     High-CTR Packaging Rules (CRITICAL - YouTube Packaging Linter Standard):
-    - "title": 42-58 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile. Front-load the curiosity gap and primary search keyword in the first 35 chars. Use specific numbers, years, or high-stakes tension (e.g., "Scientists Found THIS Under Antarctica #Shorts", "The 1977 Radio Signal That Never Repeated #Shorts", "Why 95% Of Earth's Ocean Is Unmapped #Shorts"). BANNED VAGUE WORDS: never use "insane", "incredible", "amazing", "crazy", "huge", "secret", "mindblowing", "epic".
+    - "title": 42-55 characters MAX (including " #Shorts" at the end) so it NEVER gets truncated on mobile screens. Front-load curiosity, high stakes, or the core mystery in the first 35 chars. Use specific figures, years, or tension (e.g., "Trapped 60 Hours Underwater #Shorts", "Why Your Brain Deletes Memories #Shorts", "The Island Nobody Can Visit #Shorts"). BANNED VAGUE WORDS: never use "insane", "incredible", "amazing", "crazy", "huge", "secret", "mindblowing", "epic".
     - "title_variants": Provide 3 distinct high-CTR title variations for YouTube Studio A/B testing:
       [
         {{"type": "Curiosity Gap", "title": "... #Shorts"}},
         {{"type": "Metric/Urgency", "title": "... #Shorts"}},
         {{"type": "Shock Fact", "title": "... #Shorts"}}
       ]
-    - "thumbnail_text": Exactly 2 to 3 ultra-short UPPERCASE words ONLY (under 12-15 characters total) following the "Rule of 3" (e.g., "IT WASN'T EMPTY", "95% UNMAPPED", "ZERO SURVIVORS", "4 MINS TOO LATE"). CRITICAL RULE: The thumbnail and title are an inseparable pair; NEVER repeat words from the title on the thumbnail! The thumbnail must state what the title does not.
+    - "thumbnail_text": Exactly 2 to 3 ultra-short UPPERCASE words ONLY (under 12-15 characters total) following the "Rule of 3" (e.g., "HE WAS ALIVE", "NO WAY OUT", "BRAIN GLITCH", "STILL MISSING", "DON'T LOOK"). CRITICAL RULE: The thumbnail and title are an inseparable pair; NEVER repeat words from the title on the thumbnail! The thumbnail shows the emotion/result; the title explains the premise.
     - "description": 2 tight, keyword-rich sentences (120-160 chars) written for YouTube Search & Suggested discovery. Open with primary search keywords within the first 100 characters + an open curiosity loop that makes viewers watch instead of spoiling the twist.
-    - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#DeepSea", "#ScienceFacts"]).
-    - "seo_tags": 10 to 15 high-demand YouTube Search keyword phrases (2-4 words each, NO # symbol, mixing specific topic queries + broad niche demand like "unsolved ocean mysteries", "weird science discoveries"). Incorporate relevant winning terms from: {tags_string}.
-    - "video_queries": Provide 8 concise 2-3 word stock-video search queries (e.g. "deep ocean", "night sky", "ancient ruins", "radar screen") matching each scene beat so real HD video footage can be fetched.
-    - "image_prompts": Provide 8 distinct, vivid vertical-scene image prompts matching the beat-by-beat progression of the script (used as fallback or for surreal scenes).
+    - "tags": 3 to 4 focused #Hashtags relevant to the video (always include #Shorts, e.g. ["#Shorts", "#Mystery", "#TrueStory"]).
+    - "seo_tags": 10 to 15 high-demand YouTube Search keyword phrases (2-4 words each, NO # symbol, mixing specific topic queries + broad niche demand like "unsolved mysteries", "dark psychology tricks", "survival stories"). Incorporate relevant winning terms from: {tags_string}.
+    - "video_queries": Provide 8 concise 2-3 word stock-video search queries (e.g. "dark underwater", "diver bubbles", "brain scan neural", "creepy vault door", "abandoned island waves") matching each scene beat so real HD video footage can be fetched.
+    - "image_prompts": Provide 8 distinct, vivid vertical-scene image prompts matching the beat-by-beat progression of the script (photorealistic, cinematic lighting, 8k documentary style, dramatic angle, 9:16 vertical).
 
     Monetization, Demand & Engagement:
     - "affiliate_keyword": A generic 1-2 word product search term related to this topic (e.g., "telescope", "night vision").
