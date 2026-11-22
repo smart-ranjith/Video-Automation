@@ -85,6 +85,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add topic_history.json cliffhanger.json performance_report.json viewer_requests.json 2>/dev/null || true
+          git add topic_history.json cliffhanger.json performance_report.json viewer_requests.json packaging_ab_test.json longform_expansion_ideas.json thumbnail_b.jpg 2>/dev/null || true
           git diff --staged --quiet || git commit -m "Update pipeline state files [skip ci]"
           git push || echo "Nothing to push"

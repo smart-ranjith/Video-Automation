@@ -153,7 +153,7 @@ def process_hybrid_video(input_clip_path, chat_id):
             content["title"] = title
             content["thumbnail_text"] = thumb
 
-            generate_ai_thumbnail(title=title, text_hook=thumb, visual_theme=content.get("visual_theme", ""))
+            generate_ai_thumbnail(title=title, text_hook=thumb, visual_theme=content.get("visual_theme", ""), content=content)
 
             out_video = "final_short.mp4"
             try:
