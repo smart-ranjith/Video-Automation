@@ -1,0 +1,27 @@
+{
+  "primary_title": "2,300\u2011Meter Brine Vortex Frozen in 3 Minutes #Shorts",
+  "title_variants": [
+    {
+      "type": "Curiosity Gap",
+      "title": "What Frozen Brine Did to a 2,300\u2011Meter Vortex #Shorts"
+    },
+    {
+      "type": "Metric/Urgency",
+      "title": "150\u2011Decibel Ocean Roar Silenced in 3 Minutes #Shorts"
+    },
+    {
+      "type": "Shock Fact",
+      "title": "Super\u2011Cold Brine Halted a 150\u2011dB Vortex Instantly #Shorts"
+    }
+  ],
+  "thumbnails": {
+    "variant_a_gold": "thumbnail.jpg",
+    "variant_b_cyan": "thumbnail_b.jpg"
+  },
+  "packaging_rules": {
+    "rule_of_3": "PASSED (Subject + Negative Space + 2-3 Words)",
+    "mobile_1_second_readability": "PASSED (< 15 characters, no overlap with title)",
+    "ten_percent_zoom_test": "PASSED (136px bold font, 10px black stroke, translucent pill)",
+    "youtube_studio_instructions": "Upload thumbnail.jpg and thumbnail_b.jpg in YouTube Studio -> Video Details -> Thumbnail -> Test & Compare."
+  }
+}
