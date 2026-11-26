@@ -634,7 +634,22 @@ def generate_text_with_fallback(prompt, temperature=0.8):
                 continue
     return None
 
-def generate_script_via_groq_fallback(prompt, tags_string):
+def _has_topic_collision(title, saturated_themes=None, avoid_topics=None):
+    """Detect whether a candidate title overlaps excessively with banned saturated words or recent titles."""
+    t_tokens = set(words(title)) - STOP_WORDS - VAGUE_WORDS - {"shorts"}
+    ban_set = {str(w).lower() for w in (saturated_themes or [])[:8]}
+    ban_hits = sorted(t_tokens & ban_set)
+    if len(ban_hits) >= 2:
+        return True, f"matches saturated theme words {ban_hits}"
+    for prev in (avoid_topics or [])[-12:]:
+        prev_tokens = set(words(prev)) - STOP_WORDS - VAGUE_WORDS - {"shorts"}
+        shared = sorted(t_tokens & prev_tokens)
+        if len(shared) >= 3 or (len(shared) >= 2 and len(t_tokens) <= 4):
+            return True, f"too similar to recent video '{prev}' (shared {shared})"
+    return False, ""
+
+
+def generate_script_via_groq_fallback(prompt, tags_string, tavily_query=None, saturated_themes=None, avoid_topics=None):
     """Last-resort fallback if ALL Gemini models are exhausted/failing. Uses
     Groq (genuinely generous free tier, OpenAI-compatible API, no mysterious
     quota issues reported) for generation, and Tavily's free tier (built
@@ -650,10 +665,11 @@ def generate_script_via_groq_fallback(prompt, tags_string):
     search_context = ""
     if tavily_key:
         try:
-            print("🔎 Fetching live trend context via Tavily (Groq has no built-in search)...")
+            query_str = tavily_query or "trending viral dark psychology illusions survival stories unsolved mysteries"
+            print(f"🔎 Fetching live trend context via Tavily: '{query_str}'...")
             r = requests.post("https://api.tavily.com/search", json={
                 "api_key": tavily_key,
-                "query": "trending viral mysteries dark psychology survival stories shocking true facts today",
+                "query": query_str,
                 "max_results": 5,
             }, timeout=30)
             if r.status_code == 200:
@@ -666,13 +682,13 @@ def generate_script_via_groq_fallback(prompt, tags_string):
     if search_context:
         full_prompt = f"Current trending context from live web search:\n{search_context}\n\n{prompt}"
 
-    for model_name in GROQ_MODELS:
+    for idx, model_name in enumerate(GROQ_MODELS):
         try:
             print(f"🧠 Falling back to Groq ({model_name}) for script generation...")
             payload = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": full_prompt}],
-                "temperature": 0.7,
+                "temperature": 0.75 if idx == 0 else 0.9,
                 "max_tokens": 4096,
                 "response_format": {"type": "json_object"},
             }
@@ -690,7 +706,7 @@ def generate_script_via_groq_fallback(prompt, tags_string):
                     retry_payload = {
                         "model": model_name,
                         "messages": [{"role": "user", "content": full_prompt + "\n\nCRITICAL: Provide ONLY valid JSON inside ```json ... ``` codeblock. Do not include extra commentary."}],
-                        "temperature": 0.7,
+                        "temperature": 0.8,
                         "max_tokens": 4096,
                     }
                     r = requests.post(
@@ -706,6 +722,14 @@ def generate_script_via_groq_fallback(prompt, tags_string):
             data = extract_json_object(raw_text)
             data["script"] = clean_script_retention(data.get("script", ""))
             data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+
+            # Reject duplicate/saturated topic drafts on earlier models when fallbacks remain
+            collides, col_reason = _has_topic_collision(data.get("title", ""), saturated_themes, avoid_topics)
+            if collides and idx < len(GROQ_MODELS) - 1:
+                print(f"🔄 Rejecting repetitive draft '{data.get('title')}' ({col_reason}); retrying next model for fresh subject...")
+                full_prompt += f"\n\nCRITICAL REJECTION: Do NOT use the topic '{data.get('title')}' ({col_reason}). Invent a 100% DIFFERENT subject."
+                continue
+
             h_score, h_props = score_script_hook(data.get("script", ""))
             print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
             variants = data.get("title_variants")
@@ -721,43 +745,91 @@ def generate_script_via_groq_fallback(prompt, tags_string):
             print(f"⚠️ Groq fallback ({model_name}) error: {e}")
     return None
 
-def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None, viewer_requests=None):
+def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None, viewer_requests=None, strategy=None):
     print("🧠 Asking Gemini to scan live web trends and write the script...")
-    
+
+    if strategy is None:
+        try:
+            import analytics_engine
+            strategy = analytics_engine.load_active_strategy()
+        except Exception:
+            strategy = {}
+
     if not dynamic_tags_list:
         dynamic_tags_list = ["Shorts", "Mystery", "Unexplained", "TrueStory", "Survival", "PsychologyTricks", "DarkPsychology", "MindBlowing"]
-        
+
     tags_string = ", ".join(dynamic_tags_list[:20])
 
-    avoid_block = f"\n    Do NOT repeat these already-covered topics: {'; '.join(avoid_topics[-50:])}\n" if avoid_topics else ""
-    boost_block = f"\n    Top performing channel videos (reverse-engineer why viewers clicked & watched): {'; '.join(boost_topics)}\n" if boost_topics else ""
+    # Load weekly dashboard strategy insights (retention sweet spot, saturated cliché bans, active niche)
+    ret_insights = strategy.get("retention_insights", {})
+    rec_sec = max(18, min(26, int(ret_insights.get("recommended_target_sec", 22) or 22)))
+    word_rng = ret_insights.get("recommended_word_range", [50, 62])
+    steep_sec = ret_insights.get("steepest_drop_sec", 5)
+    critical_sec = retention_dropoff_sec or ret_insights.get("critical_dropoff_sec")
+
+    saturated_themes = strategy.get("topic_diversity", {}).get("saturated_themes_to_ban", [])
+    active_arch = strategy.get("active_archetype", {})
+    tavily_query = active_arch.get("tavily_query")
+
+    if not boost_topics and strategy.get("top_watch_time"):
+        boost_topics = [
+            f"{v.get('title')} ({v.get('views')} views, {v.get('watch_minutes')}m watch, {v.get('avg_view_percentage')}% APV)"
+            for v in strategy.get("top_watch_time", [])[:4]
+        ]
+
+    avoid_block = f"\n    Do NOT repeat or rewrite these already-covered videos: {'; '.join(avoid_topics[-35:])}\n" if avoid_topics else ""
+    saturation_block = ""
+    if saturated_themes:
+        saturation_block = (
+            f"\n    STRICT ANTI-CLONE BAN (Channel Saturation Guard): The following words/themes were OVERUSED in recent uploads "
+            f"and are STRICTLY BANNED from your topic and title: {', '.join(saturated_themes[:10])}. Pick a 100% FRESH subject!\n"
+        )
+    boost_block = (
+        f"\n    Top performing channel videos (reverse-engineer ONLY their hook structure & pacing; NEVER reuse their exact subject nouns): "
+        f"{'; '.join(boost_topics)}\n" if boost_topics else ""
+    )
+    niche_block = ""
+    if active_arch:
+        niche_block = (
+            f"\n    WEEKLY DASHBOARD PRIORITY NICHE: '{active_arch.get('label', '')}' — "
+            f"{active_arch.get('prompt_directive', '')}\n"
+        )
     demand_block = ""
     if viewer_requests:
-        demand_block = f"\n    HIGH-DEMAND VIEWER REQUEST (prioritize or weave this topic in if not already covered): {viewer_requests[0]}\n"
-    retention_block = ""
-    if retention_dropoff_sec:
-        retention_block = (f"\n    CRITICAL PACING FIX: your last video lost half its audience by second "
-                            f"{retention_dropoff_sec}. Make sure THIS script's pacing stays punchy and escalating "
-                            f"through at least that point - no slow/explanatory sentences before then.\n")
+        demand_block = f"\n    HIGH-DEMAND VIEWER REQUEST / BREAKOUT SPIN-OFF (prioritize this angle): {viewer_requests[0]}\n"
+
+    retention_block = (
+        f"\n    DASHBOARD RETENTION TARGET: Top-retention videos run ~{rec_sec}s ({word_rng[0]}-{word_rng[1]} spoken words). "
+        f"CURVE FIX: steep viewer drop begins around second {steep_sec}"
+        + (f" and half of viewers leave by {critical_sec}s" if critical_sec else "")
+        + f". Insert a jarring visual twist BEFORE second {max(3, steep_sec - 1)} and keep sentences punchy with zero slow setup!\n"
+    )
+
     cliffhanger_block = ""
     if os.path.exists(CLIFFHANGER_FILE):
-        with open(CLIFFHANGER_FILE, "r") as f: pending_mystery = f.read()
-        cliffhanger_block = f"\n    URGENT: Resolve yesterday's cliffhanger in the first sentence: '{pending_mystery}'\n"
+        with open(CLIFFHANGER_FILE, "r", encoding="utf-8") as f:
+            pending_mystery = f.read().strip()
         os.remove(CLIFFHANGER_FILE)
+        # Discard stale cliffhanger if it contains any top saturated cliché word
+        ch_hits = set(words(pending_mystery)) & {w.lower() for w in saturated_themes[:6]}
+        if not ch_hits and pending_mystery:
+            cliffhanger_block = f"\n    OPTIONAL CLIFFHANGER BRIDGE: Weave in a fresh twist resolving: '{pending_mystery}'\n"
+        elif pending_mystery:
+            print(f"🧹 Cleared stale saturated cliffhanger ({sorted(ch_hits)}) so channel can pivot to fresh niche.")
 
     prompt = f"""
     You are the Lead Creative Director and Retention Algorithm Engineer for a top-tier viral YouTube Shorts channel.
-    YOUR CORE MISSION: Drive massive Average Percentage Viewed (APV > 100%), binge sessions, and rapid subscriber growth through intense, addictive visual storytelling.
-    DO NOT write dry textbook facts, academic lectures, or encyclopedia summaries. Viewers swipe away from lectures in 1 second. Write a gripping, suspenseful 20-25 second narrative short (50-65 spoken words) built for maximum retention.
+    YOUR CORE MISSION: Drive massive Average Percentage Viewed (APV > 100%), high watch time, and rapid subscriber growth through intense, addictive visual storytelling.
+    DO NOT write dry textbook facts, academic lectures, or encyclopedia summaries. Viewers swipe away from lectures in 1 second. Write a gripping, suspenseful {rec_sec - 2}-{rec_sec} second narrative short ({word_rng[0]}-{word_rng[1]} spoken words) built for maximum retention.
 
-    HIGH-RETENTION CONTENT NICHES (Pick ONE compelling, high-curiosity concept from these 4 viral categories):
-    1. Chilling Real Mysteries & Creepy True Stories: Bizarre disappearances, eerie deep-sea or abandoned vault discoveries, strange audio recordings, unexplainable historical events with atmospheric suspense (e.g., the ship found drifting with hot food on the table and zero crew, or the sound 3,000 miles deep that panicked oceanographers).
-    2. Dark Psychology & Brain Perception Glitches: Fascinating subconscious illusions, psychological tricks that manipulate human perception, visual brain glitches that make viewers rewatch or pause to test themselves (e.g., why your brain forgets when walking through a door, or the 3-second sensory illusion that breaks your vision).
-    3. High-Stakes True Survival & Impossible Feats: Unbelievable true survival stories, extreme human endurance against impossible odds, or brilliant real-life heists (e.g., the commercial diver trapped 3 days in an air bubble 100 feet underwater in total pitch black).
-    4. Forbidden Places & Restricted Secrets: Locations on Earth where human presence is strictly banned, guarded vaults, or hidden underground megastructures (e.g., the island guarded by gunboats where anyone who lands vanishes, or the secret chamber built into Mount Rushmore).
+    HIGH-RETENTION CONTENT ARCHETYPES (Pick a FRESH, compelling concept matching the Weekly Dashboard Priority Niche):
+    1. Dark Psychology & Brain Perception Glitches: Subconscious illusions, persuasion/social dynamics, or sensory/memory glitches that make viewers pause or replay to test themselves.
+    2. High-Stakes True Survival & Impossible Feats: Real ticking-clock survival stories, impossible rescues, or clever real-life escapes told with intense moment-by-moment stakes.
+    3. Chilling Real Mysteries & Creepy True Stories: Haunting vanishings, bizarre historical oddities, unexplained recordings, or atmospheric suspense.
+    4. Forbidden Places & Locked Secrets: Sealed vaults, lost underground structures, or classified relics never covered on this channel before.
 
-    Write an optimized 20-25 second YouTube Shorts script (50-65 spoken words) in English. Zero filler, maximum curiosity and retention.
-    {avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
+    Write an optimized {rec_sec - 2}-{rec_sec} second YouTube Shorts script ({word_rng[0]}-{word_rng[1]} spoken words) in English. Zero filler, maximum curiosity and retention.
+    {niche_block}{saturation_block}{avoid_block}{boost_block}{demand_block}{retention_block}{cliffhanger_block}
     
     Retention Algorithm Rules (Target: APV > 100%):
     1. HOOK (0-3 seconds, words 1-15): Drop the viewer right into the middle of the crisis, impossibility, or paradox.
@@ -858,6 +930,12 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
                 data = extract_json_object(raw_text)
                 data["script"] = clean_script_retention(data.get("script", ""))
                 data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+                if attempt == 0:
+                    collides, col_reason = _has_topic_collision(data.get("title", ""), saturated_themes, avoid_topics)
+                    if collides:
+                        print(f"🔄 Rejecting repetitive Gemini draft '{data.get('title')}' ({col_reason}); retrying once...")
+                        prompt += f"\n\nCRITICAL REJECTION: Never write about '{data.get('title')}' ({col_reason}). Pick a 100% NEW topic."
+                        continue
                 h_score, h_props = score_script_hook(data.get("script", ""))
                 print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
                 variants = data.get("title_variants")
@@ -886,7 +964,13 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
         print(f"ℹ️ Giving up on {model_name}, trying next model if available...")
 
     print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
-    fallback_data = generate_script_via_groq_fallback(prompt, tags_string)
+    fallback_data = generate_script_via_groq_fallback(
+        prompt,
+        tags_string,
+        tavily_query=tavily_query,
+        saturated_themes=saturated_themes,
+        avoid_topics=avoid_topics,
+    )
     if fallback_data:
         fallback_data["title"], fallback_data["thumbnail_text"] = lint_title_thumbnail_pair(fallback_data.get("title", ""), fallback_data.get("thumbnail_text", ""))
         h_score, h_props = score_script_hook(fallback_data.get("script", ""))
@@ -2219,26 +2303,44 @@ async def main():
     restore_google_secrets()
     credentials = get_google_credentials()
     
-    # Run the Weekly Analytics Telemetry Logger
-    log_weekly_analytics(credentials)
+    # Run Weekly YouTube Dashboard Audit once per week (or reuse active channel_strategy.json)
+    strategy = {}
+    try:
+        import analytics_engine
+        strategy = analytics_engine.run_weekly_dashboard_analysis(force=False, send_telegram=True)
+    except Exception as e:
+        print(f"⚠️ Weekly dashboard engine fallback to legacy telemetry: {e}")
+        log_weekly_analytics(credentials)
 
     # Engage with existing audience on the previous video before making a new one
     reply_to_top_comments(credentials)
 
-    boost_topics = fetch_top_performing_titles(credentials)
-    retention_dropoff_sec = fetch_retention_dropoff(credentials)
+    boost_topics = []
+    if strategy.get("top_watch_time"):
+        boost_topics = [
+            f"{v.get('title')} ({v.get('views')} views, {v.get('watch_minutes')}m watch, {v.get('avg_view_percentage')}% APV)"
+            for v in strategy.get("top_watch_time", [])[:5]
+        ]
+    else:
+        boost_topics = fetch_top_performing_titles(credentials)
+
+    retention_dropoff_sec = (
+        strategy.get("retention_insights", {}).get("critical_dropoff_sec")
+        or fetch_retention_dropoff(credentials)
+    )
 
     # Fetch tags from your highest reach videos and queued viewer requests
     viral_tags = fetch_high_reach_tags(credentials)
     viewer_requests = load_viewer_requests()
     
-    # Pass the tags and viewer demand into the AI generator
+    # Pass the tags, weekly dashboard strategy, and viewer demand into the AI generator
     content = generate_script(
         avoid_topics=[h["title"] for h in load_topic_history()], 
         boost_topics=boost_topics,
         dynamic_tags_list=viral_tags,
         retention_dropoff_sec=retention_dropoff_sec,
         viewer_requests=viewer_requests,
+        strategy=strategy,
     )
     content["_channel_tags"] = viral_tags
     # CineMind Department B: Formulate the structured creative brief
@@ -2284,6 +2386,14 @@ async def main():
             try:
                 with open(VIEWER_REQUESTS_FILE, "w", encoding="utf-8") as f:
                     json.dump(viewer_requests[1:], f, indent=2)
+            except Exception:
+                pass
+        # Clear single-use breakout bonus trigger flag once a triggered upload finishes
+        if strategy.get("trigger_policy", {}).get("breakout_bonus_dispatch"):
+            try:
+                strategy["trigger_policy"]["breakout_bonus_dispatch"] = False
+                with open("channel_strategy.json", "w", encoding="utf-8") as f:
+                    json.dump(strategy, f, indent=2)
             except Exception:
                 pass
         youtube_client = build("youtube", "v3", credentials=credentials)

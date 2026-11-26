@@ -267,6 +267,7 @@ def run_bot():
                             "👋 *Welcome to CineMind Zero-Cost Hybrid Studio!*\n\n"
                             "Here is how to get 10x cinematic AI Shorts for $0 without manual approval:\n"
                             "🎬 *Autonomous Mode:* Send `/flow [topic]` ➔ Flow Connector will automatically generate the 9:16 Veo AI video scene directly from your Google Flow session, assemble the Short, run QC, and publish!\n\n"
+                            "📊 *YouTube Analytics:* Send `/analytics` for your latest weekly dashboard summary, retention curve insights, and peak triggers (or `/analytics refresh` to run a live audit now).\n\n"
                             "📁 *Manual Upload Mode:* Drop any Google Flow / Veo video clip into this chat.\n"
                             "📋 *Prompt Inspiration:* Use `/prompt [topic]` to get 3 instant ready-to-paste Veo prompts.\n\n"
                             "✨ *Autonomous Pipeline:*\n"
@@ -276,6 +277,19 @@ def run_bot():
                             "   • If Quality Check fails ➔ **Auto-regenerates automatically** until it is good!"
                         )
                         send_message(chat_id, welcome)
+
+                    elif text.startswith("/analytics") or text.startswith("/report"):
+                        refresh_req = "refresh" in text.lower() or "now" in text.lower()
+                        try:
+                            import analytics_engine
+                            if refresh_req or not analytics_engine.load_active_strategy():
+                                send_message(chat_id, "📊 *Querying live YouTube Analytics Dashboard...*")
+                                strat = analytics_engine.run_weekly_dashboard_analysis(force=True, send_telegram=False)
+                            else:
+                                strat = analytics_engine.load_active_strategy()
+                            send_message(chat_id, analytics_engine.format_strategy_summary(strat))
+                        except Exception as e:
+                            send_message(chat_id, f"⚠️ Analytics error: {e}")
 
                     elif text.startswith("/flow"):
                         topic = text.replace("/flow", "").strip() or None

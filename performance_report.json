@@ -1,61 +1,113 @@
 {
-  "generated_at": "2026-11-26 15:48:23",
+  "generated_at": "2026-11-26 16:24:37",
+  "channel_summary": {
+    "channel_title": "Interesting_Facts_Daily",
+    "total_views": 5660,
+    "subscribers": 4,
+    "video_count": 175
+  },
+  "weekly_kpis": {
+    "current_7d": {
+      "views": 1781,
+      "watch_minutes": 169,
+      "avg_view_duration_sec": 16,
+      "avg_view_percentage": 55.34,
+      "subscribers_gained": 0,
+      "likes": 21,
+      "shares": 0
+    },
+    "previous_7d": {
+      "views": 1536,
+      "watch_minutes": 121,
+      "avg_view_duration_sec": 12,
+      "avg_view_percentage": 49.8,
+      "subscribers_gained": 1,
+      "likes": 21,
+      "shares": 0
+    },
+    "views_delta_pct": 16.0,
+    "watch_minutes_delta_pct": 39.7
+  },
   "top_videos_this_week": [
     {
-      "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts",
-      "views": "242",
-      "likes": "2"
-    },
-    {
-      "title": "Brine Wiped Out 300\u2011Meter Ocean Vortex in 3 Minutes #Shorts",
-      "views": "234",
-      "likes": "3"
-    },
-    {
-      "title": "Super\u2011Cold Brine Silences 150\u2011Decibel Ocean Roar #Shorts",
-      "views": "225",
-      "likes": "5"
+      "title": "Football\u2011Field Roar From the Deep Ocean #Shorts",
+      "views": "635",
+      "watch_minutes": "43",
+      "avg_view_percentage": "39.07%",
+      "likes": "8"
     },
     {
       "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts",
       "views": "224",
+      "watch_minutes": "31",
+      "avg_view_percentage": "129.33%",
       "likes": "3"
+    },
+    {
+      "title": "Football\u2011Field Hum Found in Mariana Trench #Shorts",
+      "views": "384",
+      "watch_minutes": "31",
+      "avg_view_percentage": "55.28%",
+      "likes": "5"
+    },
+    {
+      "title": "Super\u2011Cold Brine Silences 150\u2011Decibel Ocean Roar #Shorts",
+      "views": "225",
+      "watch_minutes": "27",
+      "avg_view_percentage": "51.11%",
+      "likes": "5"
+    },
+    {
+      "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts",
+      "views": "242",
+      "watch_minutes": "24",
+      "avg_view_percentage": "44.37%",
+      "likes": "2"
+    },
+    {
+      "title": "Brine Wiped Out 300\u2011Meter Ocean Vortex in 3 Minutes #Shorts",
+      "views": "236",
+      "watch_minutes": "16",
+      "avg_view_percentage": "37.11%",
+      "likes": "3"
+    },
+    {
+      "title": "2\u2011km Hot Brine River Discovered Under Red Sea #Shorts",
+      "views": "216",
+      "watch_minutes": "16",
+      "avg_view_percentage": "58.06%",
+      "likes": "2"
     },
     {
       "title": "3\u2011Minute Brine Blast Erased a 300\u2011Meter Ocean Vortex #Shorts",
       "views": "167",
+      "watch_minutes": "16",
+      "avg_view_percentage": "55.64%",
       "likes": "1"
     },
     {
-      "title": "Super\u2011Cold Brine Wiped Out a 30\u2011m Ocean Vortex in 3 #Shorts",
-      "views": "155",
-      "likes": "3"
-    },
-    {
-      "title": "Brine Wipes Out 12\u2011Meter Ocean Vortex in 3 Min #Shorts",
-      "views": "141",
-      "likes": "0"
-    },
-    {
-      "title": "Super\u2011Cold Brine Erases Ocean Vortex in 3 Minutes #Shorts",
-      "views": "94",
+      "title": "300\u2011Meter Glowing Vortex Ripped the Southern Ocean #Shorts",
+      "views": "109",
+      "watch_minutes": "12",
+      "avg_view_percentage": "71.41%",
       "likes": "2"
     },
     {
       "title": "Super\u2011Cold Brine Vortex Frozen the 150\u2011dB Roar #Shorts",
       "views": "89",
-      "likes": "1"
-    },
-    {
-      "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts",
-      "views": "156",
+      "watch_minutes": "11",
+      "avg_view_percentage": "90.42%",
       "likes": "1"
     }
   ],
   "diagnostic_checks": {
-    "reach_impressions_funnel": "Healthy (Packaging Linter & Rule of 3 active)",
-    "key_moments_retention": "0-5s Hook Scorer & Seamless Loop enforced",
-    "traffic_sources": "Optimized for Shorts Feed, Browse Features, and 3-Spot Search SEO",
-    "session_time": "Themed Playlists & Series End Screen bridges enabled"
+    "high_seen_leader": "Football\u2011Field Roar From the Deep Ocean #Shorts (635 views)",
+    "watch_time_leader": "Football\u2011Field Roar From the Deep Ocean #Shorts (43 min)",
+    "retention_leader": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts (129.33% APV)",
+    "critical_dropoff_second": "9s (Top 3s hold: 135.3% vs Weak: 102.0%)",
+    "peak_days": "Saturday, Friday, Sunday",
+    "topic_diversity": "49/100 (Banning saturated: ocean, brine, vortex, boat, roar, vanishes)",
+    "next_recommended_niche": "High-Stakes True Survival & Impossible Escapes",
+    "trigger_mode": "balanced (Breakout Dispatch: False)"
   }
 }

@@ -32,7 +32,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Evaluate Analytics Trigger Gate
+        id: trigger_gate
+        run: |
+          python analytics_engine.py --check-trigger --event "${{ github.event_name }}"
+
       - name: Cache pip packages
+        if: steps.trigger_gate.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -41,17 +47,20 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Cache MiDaS depth model (torch hub)
+        if: steps.trigger_gate.outputs.should_run == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/torch
           key: ${{ runner.os }}-torchhub-midas-v1
 
       - name: Install Dependencies
+        if: steps.trigger_gate.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install --prefer-binary -r requirements.txt
           
       - name: Run Video Generator Engine
+        if: steps.trigger_gate.outputs.should_run == 'true'
         timeout-minutes: 45
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -72,7 +81,7 @@ jobs:
           python generator.py 2>&1 | tee generator_run.log
 
       - name: Save run output log
-        if: always()
+        if: always() && steps.trigger_gate.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -81,10 +90,10 @@ jobs:
           git push || echo "Nothing to push"
 
       - name: Commit updated state files back to repo
-        if: always()   # run even if the generator step above failed partway - save whatever state exists
+        if: always() && steps.trigger_gate.outputs.should_run == 'true'   # run even if the generator step above failed partway - save whatever state exists
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add topic_history.json cliffhanger.json performance_report.json viewer_requests.json packaging_ab_test.json longform_expansion_ideas.json thumbnail_b.jpg community_poll.txt 2>/dev/null || true
+          git add topic_history.json cliffhanger.json channel_strategy.json performance_report.json viewer_requests.json packaging_ab_test.json longform_expansion_ideas.json thumbnail_b.jpg community_poll.txt 2>/dev/null || true
           git diff --staged --quiet || git commit -m "Update pipeline state files [skip ci]"
           git push || echo "Nothing to push"

@@ -1,0 +1,483 @@
+{
+  "last_analyzed_at": "2026-11-26T16:24:37Z",
+  "next_due_at": "2026-12-03T16:24:37Z",
+  "channel": {
+    "channel_title": "Interesting_Facts_Daily",
+    "total_views": 5660,
+    "subscribers": 4,
+    "video_count": 175
+  },
+  "weekly_kpis": {
+    "current_7d": {
+      "views": 1781,
+      "watch_minutes": 169,
+      "avg_view_duration_sec": 16,
+      "avg_view_percentage": 55.34,
+      "subscribers_gained": 0,
+      "likes": 21,
+      "shares": 0
+    },
+    "previous_7d": {
+      "views": 1536,
+      "watch_minutes": 121,
+      "avg_view_duration_sec": 12,
+      "avg_view_percentage": 49.8,
+      "subscribers_gained": 1,
+      "likes": 21,
+      "shares": 0
+    },
+    "views_delta_pct": 16.0,
+    "watch_minutes_delta_pct": 39.7
+  },
+  "top_high_seen": [
+    {
+      "video_id": "-D18_h2tdwI",
+      "title": "Football\u2011Field Roar From the Deep Ocean #Shorts",
+      "views": 635,
+      "watch_minutes": 43,
+      "avg_view_duration_sec": 9,
+      "avg_view_percentage": 39.07,
+      "duration_sec": 25,
+      "subscribers_gained": 1,
+      "viral_score": 89.92
+    },
+    {
+      "video_id": "15uszoFe2-U",
+      "title": "Football\u2011Field Hum Found in Mariana Trench #Shorts",
+      "views": 384,
+      "watch_minutes": 31,
+      "avg_view_duration_sec": 13,
+      "avg_view_percentage": 55.28,
+      "duration_sec": 25,
+      "subscribers_gained": 0,
+      "viral_score": 60.26
+    },
+    {
+      "video_id": "_o_Y3sh0ceQ",
+      "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts",
+      "views": 242,
+      "watch_minutes": 24,
+      "avg_view_duration_sec": 13,
+      "avg_view_percentage": 44.37,
+      "duration_sec": 31,
+      "subscribers_gained": 0,
+      "viral_score": 44.48
+    },
+    {
+      "video_id": "Xx_ix6F3rJI",
+      "title": "Brine Wiped Out 300\u2011Meter Ocean Vortex in 3 Minutes #Shorts",
+      "views": 236,
+      "watch_minutes": 16,
+      "avg_view_duration_sec": 11,
+      "avg_view_percentage": 37.11,
+      "duration_sec": 30,
+      "subscribers_gained": 0,
+      "viral_score": 37.69
+    },
+    {
+      "video_id": "9Hr2kS5m07g",
+      "title": "Super\u2011Cold Brine Silences 150\u2011Decibel Ocean Roar #Shorts",
+      "views": 225,
+      "watch_minutes": 27,
+      "avg_view_duration_sec": 15,
+      "avg_view_percentage": 51.11,
+      "duration_sec": 31,
+      "subscribers_gained": 0,
+      "viral_score": 50.24
+    }
+  ],
+  "top_watch_time": [
+    {
+      "video_id": "-D18_h2tdwI",
+      "title": "Football\u2011Field Roar From the Deep Ocean #Shorts",
+      "views": 635,
+      "watch_minutes": 43,
+      "avg_view_duration_sec": 9,
+      "avg_view_percentage": 39.07,
+      "duration_sec": 25,
+      "subscribers_gained": 1,
+      "viral_score": 89.92
+    },
+    {
+      "video_id": "27Am9h0SGK4",
+      "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts",
+      "views": 224,
+      "watch_minutes": 31,
+      "avg_view_duration_sec": 32,
+      "avg_view_percentage": 129.33,
+      "duration_sec": 25,
+      "subscribers_gained": 0,
+      "viral_score": 70.77
+    },
+    {
+      "video_id": "15uszoFe2-U",
+      "title": "Football\u2011Field Hum Found in Mariana Trench #Shorts",
+      "views": 384,
+      "watch_minutes": 31,
+      "avg_view_duration_sec": 13,
+      "avg_view_percentage": 55.28,
+      "duration_sec": 25,
+      "subscribers_gained": 0,
+      "viral_score": 60.26
+    },
+    {
+      "video_id": "9Hr2kS5m07g",
+      "title": "Super\u2011Cold Brine Silences 150\u2011Decibel Ocean Roar #Shorts",
+      "views": 225,
+      "watch_minutes": 27,
+      "avg_view_duration_sec": 15,
+      "avg_view_percentage": 51.11,
+      "duration_sec": 31,
+      "subscribers_gained": 0,
+      "viral_score": 50.24
+    },
+    {
+      "video_id": "_o_Y3sh0ceQ",
+      "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts",
+      "views": 242,
+      "watch_minutes": 24,
+      "avg_view_duration_sec": 13,
+      "avg_view_percentage": 44.37,
+      "duration_sec": 31,
+      "subscribers_gained": 0,
+      "viral_score": 44.48
+    }
+  ],
+  "top_retention": [
+    {
+      "video_id": "27Am9h0SGK4",
+      "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts",
+      "views": 224,
+      "watch_minutes": 31,
+      "avg_view_duration_sec": 32,
+      "avg_view_percentage": 129.33,
+      "duration_sec": 25,
+      "subscribers_gained": 0,
+      "viral_score": 70.77
+    },
+    {
+      "video_id": "S0SCzfOShb8",
+      "title": "Atacama's 3\u2011Minute Flash & Vanishing Plasma Vortex #Shorts",
+      "views": 28,
+      "watch_minutes": 2,
+      "avg_view_duration_sec": 21,
+      "avg_view_percentage": 92.06,
+      "duration_sec": 23,
+      "subscribers_gained": 0,
+      "viral_score": 40.24
+    },
+    {
+      "video_id": "Kt6oqI5_0VE",
+      "title": "Super\u2011Cold Brine Vortex Frozen the 150\u2011dB Roar #Shorts",
+      "views": 89,
+      "watch_minutes": 11,
+      "avg_view_duration_sec": 27,
+      "avg_view_percentage": 90.42,
+      "duration_sec": 30,
+      "subscribers_gained": 0,
+      "viral_score": 41.93
+    },
+    {
+      "video_id": "UMH195q3HfM",
+      "title": "300\u2011Meter Glowing Vortex Ripped the Southern Ocean #Shorts",
+      "views": 109,
+      "watch_minutes": 12,
+      "avg_view_duration_sec": 19,
+      "avg_view_percentage": 71.41,
+      "duration_sec": 27,
+      "subscribers_gained": 0,
+      "viral_score": 39.57
+    },
+    {
+      "video_id": "US5WPjJvjyw",
+      "title": "Super\u2011Cold Brine Wiped Out a 30\u2011m Ocean Vortex in 3 #Shorts",
+      "views": 155,
+      "watch_minutes": 11,
+      "avg_view_duration_sec": 14,
+      "avg_view_percentage": 59.98,
+      "duration_sec": 25,
+      "subscribers_gained": 0,
+      "viral_score": 37.66
+    }
+  ],
+  "weakest_performers": [
+    {
+      "video_id": "xC79kMPWaDY",
+      "title": "2,300\u2011Meter Brine Vortex Frozen in 3 Minutes #Shorts",
+      "views": 56,
+      "watch_minutes": 3,
+      "avg_view_duration_sec": 10,
+      "avg_view_percentage": 31.83,
+      "duration_sec": 32,
+      "subscribers_gained": 0,
+      "viral_score": 23.85
+    },
+    {
+      "video_id": "Xx_ix6F3rJI",
+      "title": "Brine Wiped Out 300\u2011Meter Ocean Vortex in 3 Minutes #Shorts",
+      "views": 236,
+      "watch_minutes": 16,
+      "avg_view_duration_sec": 11,
+      "avg_view_percentage": 37.11,
+      "duration_sec": 30,
+      "subscribers_gained": 0,
+      "viral_score": 37.69
+    },
+    {
+      "video_id": "-D18_h2tdwI",
+      "title": "Football\u2011Field Roar From the Deep Ocean #Shorts",
+      "views": 635,
+      "watch_minutes": 43,
+      "avg_view_duration_sec": 9,
+      "avg_view_percentage": 39.07,
+      "duration_sec": 25,
+      "subscribers_gained": 1,
+      "viral_score": 89.92
+    },
+    {
+      "video_id": "_o_Y3sh0ceQ",
+      "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts",
+      "views": 242,
+      "watch_minutes": 24,
+      "avg_view_duration_sec": 13,
+      "avg_view_percentage": 44.37,
+      "duration_sec": 31,
+      "subscribers_gained": 0,
+      "viral_score": 44.48
+    },
+    {
+      "video_id": "2no2h6XRvhU",
+      "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts",
+      "views": 155,
+      "watch_minutes": 9,
+      "avg_view_duration_sec": 12,
+      "avg_view_percentage": 44.54,
+      "duration_sec": 27,
+      "subscribers_gained": 0,
+      "viral_score": 29.83
+    }
+  ],
+  "retention_insights": {
+    "winner_3s_hook_hold_pct": 135.3,
+    "weak_3s_hook_hold_pct": 102.0,
+    "steepest_drop_sec": 5,
+    "critical_dropoff_sec": 9,
+    "recommended_target_sec": 25,
+    "recommended_word_range": [
+      56,
+      65
+    ],
+    "top_winner_curves": [
+      {
+        "duration_sec": 25,
+        "hook_hold_3s_pct": 103.9,
+        "midpoint_hold_pct": 22.1,
+        "tail_hold_90_pct": 14.7,
+        "loop_replay_spike_pct": 111.8,
+        "half_audience_sec": 7,
+        "steepest_drop_sec": 5,
+        "steepest_drop_pct": 7.9,
+        "relative_retention_avg": 0.247,
+        "video_id": "-D18_h2tdwI",
+        "title": "Football\u2011Field Roar From the Deep Ocean #Shorts"
+      },
+      {
+        "duration_sec": 25,
+        "hook_hold_3s_pct": 194.1,
+        "midpoint_hold_pct": 117.7,
+        "tail_hold_90_pct": 100.0,
+        "loop_replay_spike_pct": 200.0,
+        "half_audience_sec": null,
+        "steepest_drop_sec": 5,
+        "steepest_drop_pct": 19.6,
+        "relative_retention_avg": 0.588,
+        "video_id": "27Am9h0SGK4",
+        "title": "Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts"
+      },
+      {
+        "duration_sec": 25,
+        "hook_hold_3s_pct": 108.0,
+        "midpoint_hold_pct": 44.6,
+        "tail_hold_90_pct": 25.9,
+        "loop_replay_spike_pct": 123.2,
+        "half_audience_sec": 11,
+        "steepest_drop_sec": 5,
+        "steepest_drop_pct": 8.0,
+        "relative_retention_avg": 0.366,
+        "video_id": "15uszoFe2-U",
+        "title": "Football\u2011Field Hum Found in Mariana Trench #Shorts"
+      }
+    ],
+    "weak_curves": [
+      {
+        "duration_sec": 32,
+        "hook_hold_3s_pct": 100.0,
+        "midpoint_hold_pct": 11.1,
+        "tail_hold_90_pct": 11.1,
+        "loop_replay_spike_pct": 111.1,
+        "half_audience_sec": 7,
+        "steepest_drop_sec": 6,
+        "steepest_drop_pct": 11.1,
+        "relative_retention_avg": 0.183,
+        "video_id": "xC79kMPWaDY",
+        "title": "2,300\u2011Meter Brine Vortex Frozen in 3 Minutes #Shorts"
+      },
+      {
+        "duration_sec": 30,
+        "hook_hold_3s_pct": 101.5,
+        "midpoint_hold_pct": 22.1,
+        "tail_hold_90_pct": 8.8,
+        "loop_replay_spike_pct": 108.8,
+        "half_audience_sec": 9,
+        "steepest_drop_sec": 6,
+        "steepest_drop_pct": 11.8,
+        "relative_retention_avg": 0.297,
+        "video_id": "Xx_ix6F3rJI",
+        "title": "Brine Wiped Out 300\u2011Meter Ocean Vortex in 3 Minutes #Shorts"
+      },
+      {
+        "duration_sec": 31,
+        "hook_hold_3s_pct": 104.6,
+        "midpoint_hold_pct": 33.3,
+        "tail_hold_90_pct": 14.9,
+        "loop_replay_spike_pct": 112.6,
+        "half_audience_sec": 10,
+        "steepest_drop_sec": 5,
+        "steepest_drop_pct": 8.0,
+        "relative_retention_avg": 0.315,
+        "video_id": "_o_Y3sh0ceQ",
+        "title": "500\u2011km Abyss Roar Baffles Scientists #Shorts"
+      }
+    ]
+  },
+  "traffic_sources_28d": [
+    {
+      "source": "SHORTS",
+      "views": 3115,
+      "watch_minutes": 273
+    },
+    {
+      "source": "YT_SEARCH",
+      "views": 155,
+      "watch_minutes": 10
+    },
+    {
+      "source": "YT_CHANNEL",
+      "views": 31,
+      "watch_minutes": 6
+    },
+    {
+      "source": "YT_OTHER_PAGE",
+      "views": 25,
+      "watch_minutes": 1
+    },
+    {
+      "source": "SUBSCRIBER",
+      "views": 1,
+      "watch_minutes": 0
+    },
+    {
+      "source": "NO_LINK_OTHER",
+      "views": 0,
+      "watch_minutes": 0
+    }
+  ],
+  "weekday_performance": [
+    {
+      "day": "Saturday",
+      "avg_views": 175.3,
+      "avg_watch_minutes": 13.5,
+      "avg_retention_pct": 25.5,
+      "score": 267.6
+    },
+    {
+      "day": "Friday",
+      "avg_views": 160.5,
+      "avg_watch_minutes": 14.8,
+      "avg_retention_pct": 19.4,
+      "score": 248.9
+    },
+    {
+      "day": "Sunday",
+      "avg_views": 86,
+      "avg_watch_minutes": 9.5,
+      "avg_retention_pct": 17.8,
+      "score": 150.7
+    },
+    {
+      "day": "Thursday",
+      "avg_views": 52.2,
+      "avg_watch_minutes": 3.5,
+      "avg_retention_pct": 36.7,
+      "score": 121.3
+    },
+    {
+      "day": "Wednesday",
+      "avg_views": 37.2,
+      "avg_watch_minutes": 3,
+      "avg_retention_pct": 29.7,
+      "score": 93.7
+    },
+    {
+      "day": "Tuesday",
+      "avg_views": 33,
+      "avg_watch_minutes": 3,
+      "avg_retention_pct": 20.8,
+      "score": 76.3
+    },
+    {
+      "day": "Monday",
+      "avg_views": 24.2,
+      "avg_watch_minutes": 1.3,
+      "avg_retention_pct": 21.7,
+      "score": 62.1
+    }
+  ],
+  "topic_diversity": {
+    "diversity_score": 49,
+    "saturated_themes_to_ban": [
+      "ocean",
+      "brine",
+      "vortex",
+      "boat",
+      "roar",
+      "vanishes",
+      "island",
+      "field",
+      "football",
+      "wiped"
+    ]
+  },
+  "active_archetype": {
+    "id": "true_survival",
+    "label": "High-Stakes True Survival & Impossible Escapes",
+    "tavily_query": "unbelievable true survival stories impossible rescues real life escapes",
+    "prompt_directive": "Focus on intense real-life survival against impossible odds, ticking-clock rescues, or brilliant true heists told moment-by-moment with escalating stakes."
+  },
+  "trigger_policy": {
+    "cadence_mode": "balanced",
+    "peak_days": [
+      "Saturday",
+      "Friday",
+      "Sunday"
+    ],
+    "low_days": [
+      "Tuesday",
+      "Monday"
+    ],
+    "primary_slot_utc": "11:15",
+    "secondary_slot_utc": "05:45",
+    "daily_slots_ist": [
+      [
+        11,
+        15
+      ],
+      [
+        16,
+        45
+      ]
+    ],
+    "breakout_bonus_dispatch": false,
+    "breakout_reason": "Top performer 'Super\u2011Cold Brine Wiped Out a 3\u2011Minute Ocean Vortex #Shorts' flagged, but theme tokens ['brine', 'ocean', 'vortex'] are saturated; pivoting to 'High-Stakes True Survival & Impossible Escapes' instead."
+  }
+}
