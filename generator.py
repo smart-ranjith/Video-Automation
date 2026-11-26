@@ -228,34 +228,51 @@ def words(t):
 
 def lint_title_thumbnail_pair(title, thumbnail_text):
     """
-    Implements YouTube Packaging Linter (Rule of 3 + Mobile 1-Second Readability):
-    The Title and Thumbnail are an inseparable packaging unit.
-    1. Thumbnail text must NEVER repeat non-stop words from the title (wastes 50% click surface).
-    2. Rule of 3: Enforces 2-3 words MAX on the thumbnail at mobile feed size.
-    3. Keeps total characters under 15 for instant 1-second mobile readability.
-    4. Removes vague buzzwords in favor of concrete tension and curiosity gaps.
+    YouTube Packaging Linter – backed by tools/titlelint.py (ported from
+    jakeschincariol/youtube-agent-skill). Checks:
+      • Title length (desktop 60 / mobile 40 / hard 100)
+      • All-caps count, vague words, missing numbers, front-load
+      • Thumbnail–title word duplication (wastes 50 % click surface)
+      • Thumbnail word count (ceiling: 3 words at feed size)
+    Then applies the original dedup + fallback high-tension thumbnail logic.
+    Returns (cleaned_title, thumbnail_text_upper).
     """
     import re
     cleaned_title = optimize_title(title)
     raw_thumb = re.sub(r"[^A-Za-z0-9\s$%-]", "", (thumbnail_text or "").upper()).strip()
     thumb_words = [w for w in raw_thumb.split() if w.lower() not in VAGUE_WORDS]
-    
+
+    # --- Run the upgraded titlelint scoring & log issues ---
+    try:
+        from tools.titlelint import lint_title
+        result = lint_title(cleaned_title, " ".join(thumb_words[:3]))
+        if result["issues"]:
+            print(f"📋 Title Lint [{result['score']}/100]:")
+            for k, m in result["issues"]:
+                print(f"   ✗ {k}: {m}")
+        else:
+            print(f"📋 Title Lint: ✓ {result['score']}/100 – no issues")
+    except Exception as e:
+        print(f"⚠️ titlelint import failed ({e}), skipping lint report")
+
+    # --- Dedup thumbnail words against title (original logic preserved) ---
     title_substantive = set(words(cleaned_title)) - STOP_WORDS
     thumb_substantive = set(words(" ".join(thumb_words))) - STOP_WORDS
-    
     shared = title_substantive & thumb_substantive
     if shared:
         print(f"⚠️ Packaging Linter: Thumbnail repeated words from title ({shared}). Adjusting...")
         thumb_words = [w for w in thumb_words if w.lower() not in shared and w.lower() not in STOP_WORDS]
-    
+
     if len(thumb_words) < 2:
-        high_tension_options = ["IT WASN'T EMPTY", "NEVER REPORTED", "NOT FROM EARTH", "ZERO SURVIVORS", "NOT A GLITCH", "4 MINS TOO LATE", "WHY IT STOPPED", "95% UNMAPPED"]
+        high_tension_options = ["IT WASN'T EMPTY", "NEVER REPORTED", "NOT FROM EARTH",
+                                "ZERO SURVIVORS", "NOT A GLITCH", "4 MINS TOO LATE",
+                                "WHY IT STOPPED", "95% UNMAPPED"]
         for opt in high_tension_options:
             opt_words = set(words(opt))
             if not (opt_words & title_substantive):
                 thumb_words = opt.split()
                 break
-                
+
     # Rule of 3: Maximum 3 words for instant 1-second comprehension
     thumb = " ".join(thumb_words[:3]).upper()
     return cleaned_title, thumb
@@ -382,36 +399,36 @@ def save_longform_expansion_seed(content):
 
 def score_script_hook(script_text):
     """
-    Evaluates opening hook retention based on jakeschincariol/youtube-agent-skill:
-    Checks Specificity, Stakes, Curiosity, Brevity.
-    Weighted 60% mean and 40% weakest link so no single flaw leaks audience.
+    Evaluates opening hook using the full 5-property scoring engine from
+    tools/hookscore.py (ported from jakeschincariol/youtube-agent-skill).
+    Checks Specificity, Address, Stakes, Curiosity, Brevity.
+    Verdict = 60% mean + 40% weakest link.
+    Returns (verdict_int, scores_dict).
     """
-    import re
-    first_sentence = (script_text or "").strip().split(".")[0]
-    w = words(first_sentence)
-    n = len(w)
-    if not w:
-        return 0, {}
-    
-    # Specificity: Numbers, concrete metrics, penalty for vague buzzwords
-    nums = len(re.findall(r"\b(\d[\d,.]*\s?(%|k|m|x|s|m|h)?|\$\d|\d+\s?(second|minute|hour|day|week|month|year)s?)\b", first_sentence, re.I))
-    vague = sum(1 for x in w if x in VAGUE_WORDS)
-    s_score = max(0, min(100, 34 + nums * 25 - vague * 15))
-    
-    # Stakes: Danger, anomaly, loss, cost
-    has_stakes = len(re.findall(r"\b(lose|lost|wasting|waste|quit|fail|broke|cost|risk|before|stop|never|die|dying|dead|forbidden|danger|threat|trap|anomaly)\b", first_sentence, re.I))
-    stake_score = max(0, min(100, 30 + has_stakes * 30))
-    
-    # Curiosity: Open loops, contradictions, why/how
-    has_curiosity = len(re.findall(r"\b(why|how|what|which|until|before|but|nobody|almost|except|reason|actually|beneath|hidden|secret|discovered)\b", first_sentence, re.I))
-    curiosity_score = max(0, min(100, 35 + has_curiosity * 20))
-    
-    # Brevity: 9-24 words is optimal for the first 3-5 seconds
-    brevity_score = 100 if (9 <= n <= 24) else (max(30, 100 - abs(16 - n) * 6))
-    
-    scores = {"SPECIFICITY": s_score, "STAKES": stake_score, "CURIOSITY": curiosity_score, "BREVITY": brevity_score}
-    verdict = round(0.6 * (sum(scores.values()) / len(scores)) + 0.4 * min(scores.values()))
-    return verdict, scores
+    try:
+        from tools.hookscore import score_hook
+        first_sentence = (script_text or "").strip().split(".")[0]
+        result = score_hook(first_sentence)
+        return result["verdict"], result["properties"]
+    except Exception as e:
+        print(f"⚠️ hookscore import failed ({e}), falling back to built-in scorer")
+        import re
+        first_sentence = (script_text or "").strip().split(".")[0]
+        w = words(first_sentence)
+        n = len(w)
+        if not w:
+            return 0, {}
+        nums = len(re.findall(r"\b(\d[\d,.]*\s?(%|k|m|x|s|m|h)?|\$\d|\d+\s?(second|minute|hour|day|week|month|year)s?)\b", first_sentence, re.I))
+        vague = sum(1 for x in w if x in VAGUE_WORDS)
+        s_score = max(0, min(100, 34 + nums * 25 - vague * 15))
+        has_stakes = len(re.findall(r"\b(lose|lost|wasting|waste|quit|fail|broke|cost|risk|before|stop|never|die|dying|dead)\b", first_sentence, re.I))
+        stake_score = max(0, min(100, 30 + has_stakes * 30))
+        has_curiosity = len(re.findall(r"\b(why|how|what|which|until|before|but|nobody|almost|except|reason|actually)\b", first_sentence, re.I))
+        curiosity_score = max(0, min(100, 35 + has_curiosity * 20))
+        brevity_score = 100 if (9 <= n <= 24) else (max(30, 100 - abs(16 - n) * 6))
+        scores = {"SPECIFICITY": s_score, "STAKES": stake_score, "CURIOSITY": curiosity_score, "BREVITY": brevity_score}
+        verdict = round(0.6 * (sum(scores.values()) / len(scores)) + 0.4 * min(scores.values()))
+        return verdict, scores
 
 def build_description_hashtags(hashtags_list, max_hashtags=4):
     """Selects 3-5 clean #Hashtags (YouTube displays top 3 above title; too many dilutes reach)."""
@@ -2291,7 +2308,32 @@ def upload_to_youtube(video_file, data, credentials):
 
     video_id = youtube.videos().insert(part=",".join(parts_list), body=body, media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)).execute()['id']
     print(f"✅ Success! YouTube Link: https://youtu.be/{video_id}")
-    
+
+    # ── Post-upload: Dead-air EDL + Chapter timestamps ────────────────────────
+    srt_path = "subtitles.srt"
+    if os.path.exists(srt_path) and os.path.getsize(srt_path) > 0:
+        try:
+            from tools.deadair import build_edl
+            edl = build_edl(srt_path)
+            if "error" not in edl:
+                print(f"✂️  Edit-Decision List: {edl['summary']}")
+                with open("edit_decision_list.json", "w") as f:
+                    json.dump(edl, f, indent=2)
+                print("   📄 Saved to edit_decision_list.json")
+        except Exception as e:
+            print(f"⚠️ Dead-air EDL skipped: {e}")
+        try:
+            from tools.chapters import generate_chapters
+            ch = generate_chapters(srt_path, target=7)
+            if ch.get("valid") and ch.get("paste_block"):
+                print(f"📌 Chapters generated ({len(ch['chapters'])} total). Paste block:")
+                print("   " + "\n   ".join(ch["paste_block"].splitlines()))
+                with open("chapters.txt", "w") as f:
+                    f.write(ch["paste_block"])
+        except Exception as e:
+            print(f"⚠️ Chapter generation skipped: {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Force direct thumbnail upload via API
     if os.path.exists("thumbnail.jpg"):
         try:

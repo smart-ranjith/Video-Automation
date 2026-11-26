@@ -694,6 +694,28 @@ def run_weekly_dashboard_analysis(force=False, send_telegram=True):
     print(f"✅ Weekly dashboard audit saved to '{STRATEGY_FILE}' and '{PERFORMANCE_REPORT_FILE}'.")
     print(format_strategy_summary(strategy))
 
+    # ── Retention CSV audit (yt-retention skill port) ─────────────────────────
+    # If a YouTube Studio retention CSV was manually exported to 'retention.csv',
+    # parse it now for HOOK LEAK / CLIFFS / SLIDE and append findings to strategy.
+    _csv_path = "retention.csv"
+    _srt_path = "subtitles.srt"
+    if os.path.exists(_csv_path):
+        try:
+            from tools.retention_audit import analyze_csv
+            _ret = analyze_csv(
+                _csv_path,
+                transcript_path=_srt_path if os.path.exists(_srt_path) else None,
+            )
+            if "error" not in _ret:
+                strategy["retention_csv_audit"] = _ret
+                print(f"\n📉 Retention CSV Audit:\n{_ret['summary']}")
+                # Re-save strategy with audit attached
+                with open(STRATEGY_FILE, "w", encoding="utf-8") as _f:
+                    json.dump(strategy, _f, indent=2)
+        except Exception as _e:
+            print(f"⚠️ Retention CSV audit skipped: {_e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     if send_telegram:
         send_weekly_telegram_digest(strategy)
 
