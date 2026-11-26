@@ -716,17 +716,20 @@ def format_strategy_summary(strategy):
     words_rng = ret.get("recommended_word_range", [50, 62])
     saturated = ", ".join(div.get("saturated_themes_to_ban", [])[:6]) or "None"
     peak_days = ", ".join(tp.get("peak_days", []))
+    sub_rate = round((k7.get("subscribers_gained", 0) / max(k7.get("views", 1), 1)) * 1000.0, 2)
+    longform_candidate = top_r if top_r.get("avg_view_percentage", 0) >= 85 else top_v
 
     lines = [
         "📊 *WEEKLY YOUTUBE DASHBOARD AUDIT*",
         f"• *7-Day Views:* {k7.get('views', 0):,} ({deltas.get('views_delta_pct', 0):+.1f}% WoW)",
         f"• *Watch Time:* {k7.get('watch_minutes', 0):,} min ({deltas.get('watch_minutes_delta_pct', 0):+.1f}% WoW)",
         f"• *Avg Retention:* {k7.get('avg_view_percentage', 0)}% ({k7.get('avg_view_duration_sec', 0)}s avg)",
-        f"• *Subs Gained (7d):* +{k7.get('subscribers_gained', 0)}",
+        f"• *Subs Gained (7d):* +{k7.get('subscribers_gained', 0)} (`{sub_rate}` subs / 1k views)",
         "",
         "🏆 *28-Day Leaders:*",
         f"• *Most Seen:* {top_v.get('title', 'N/A')} ({top_v.get('views', 0)} views)",
         f"• *Best Retention:* {top_r.get('title', 'N/A')} ({top_r.get('avg_view_percentage', 0)}% APV)",
+        f"• *Long-Form Candidate:* {longform_candidate.get('title', 'N/A')} (Ready in `longform_expansion_ideas.json`)",
         "",
         "📉 *Retention Curve Updates:*",
         f"• *3s Hook Hold:* Winners `{ret.get('winner_3s_hook_hold_pct')}%` vs Weak `{ret.get('weak_3s_hook_hold_pct')}%`",

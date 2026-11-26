@@ -99,10 +99,46 @@ GEMINI_MODELS = [
 
 GROQ_MODELS = [
     "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
     "llama-3.3-70b-versatile",
+    "openai/gpt-oss-20b",
     "llama-3.1-8b-instant",
 ]
+
+# Circuit-breaker: flipped True once a daily/quota 429 occurs in this process
+_GEMINI_QUOTA_EXHAUSTED = False
+
+SERIES_CONFIG = {
+    "dark_psychology": {
+        "badge_prefix": "MIND GLITCH",
+        "playlist_title": "Mind Glitches & Dark Psychology",
+        "voices": ["en-US-AriaNeural", "en-GB-RyanNeural", "en-US-GuyNeural"],
+    },
+    "true_survival": {
+        "badge_prefix": "SURVIVAL FILE",
+        "playlist_title": "Impossible Survival Files",
+        "voices": ["en-US-ChristopherNeural", "en-US-GuyNeural", "en-GB-RyanNeural"],
+    },
+    "chilling_mysteries": {
+        "badge_prefix": "DARK CASE",
+        "playlist_title": "Unsolved True Mysteries",
+        "voices": ["en-US-GuyNeural", "en-US-ChristopherNeural", "en-GB-RyanNeural"],
+    },
+    "forbidden_secrets": {
+        "badge_prefix": "VAULT FILE",
+        "playlist_title": "Forbidden Vaults & Lost Secrets",
+        "voices": ["en-US-ChristopherNeural", "en-GB-RyanNeural", "en-US-GuyNeural"],
+    },
+}
+
+def get_series_info(archetype_id=None):
+    """Return consistent series branding & binge playlist mapping for subscribers."""
+    key = archetype_id if archetype_id in SERIES_CONFIG else "dark_psychology"
+    return key, SERIES_CONFIG[key]
+
+def select_niche_voice(archetype_id=None):
+    """Pick an emotion-appropriate neural voice matched to the active weekly niche."""
+    _, cfg = get_series_info(archetype_id)
+    return random.choice(cfg["voices"])
 
 EVERGREEN_DEMAND_TAGS = [
     "unsolved mysteries",
@@ -272,20 +308,31 @@ def verify_and_enforce_3_spot_seo(content):
     3. Audio: Speaks the target keyword in the first 15 seconds (first ~35 spoken words)
        for YouTube auto-speech transcription indexing.
     """
-    title = content.get("title", "")
-    desc = content.get("description", "")
-    script = content.get("script", "")
-    seo_tags = content.get("seo_tags", [])
-    
-    primary_kw = seo_tags[0] if seo_tags else "mystery"
+    title = (content.get("title") or "").strip()
+    desc = (content.get("description") or "").strip()
+    script = (content.get("script") or "").strip()
+    seo_tags = [str(t).strip() for t in (content.get("seo_tags") or []) if str(t).strip()]
+
+    # Derive real core keyword from title if LLM omitted seo_tags
+    if not seo_tags or seo_tags[0].lower() in ("mystery", "shorts", "science"):
+        title_tokens = [w for w in words(title) if w not in STOP_WORDS and w != "shorts"]
+        derived_kw = " ".join(title_tokens[:2]) if len(title_tokens) >= 2 else (title_tokens[0] if title_tokens else "true story")
+        seo_tags = [derived_kw] + [t for t in seo_tags if t.lower() != derived_kw.lower()]
+        content["seo_tags"] = seo_tags
+
+    primary_kw = seo_tags[0]
     kw_words = [w.lower() for w in primary_kw.split() if w.lower() not in STOP_WORDS]
-    
+
     title_has_kw = any(w in title.lower() for w in kw_words) if kw_words else True
     desc_has_kw = any(w in desc[:150].lower() for w in kw_words) if kw_words else True
-    
+    if not desc_has_kw and primary_kw:
+        desc = f"{primary_kw.title()}: {desc}".strip() if desc else f"The real story behind {primary_kw}."
+        content["description"] = desc
+        desc_has_kw = True
+
     first_35_words = " ".join(script.split()[:35]).lower()
     audio_has_kw = any(w in first_35_words for w in kw_words) if kw_words else True
-    
+
     print(f"\n🔍 3-Spot YouTube SEO Verification for keyword '{primary_kw}':")
     print(f"   • 1. Title Spot (first 35 chars): {'✅ Verified' if title_has_kw else '⚠️ Sub-optimal'}")
     print(f"   • 2. Description Spot (first 120 chars): {'✅ Verified' if desc_has_kw else '⚠️ Sub-optimal'}")
@@ -602,14 +649,19 @@ def fetch_retention_dropoff(credentials):
 
 def generate_text_with_fallback(prompt, temperature=0.8):
     """Generates short plain text (e.g., pinned comment or reply) using Gemini model fallbacks then Groq."""
-    for model_name in GEMINI_MODELS:
-        try:
-            res = gemini_client.models.generate_content(model=model_name, contents=prompt)
-            text = (res.text or "").strip().strip('"')
-            if text:
-                return text
-        except Exception:
-            continue
+    global _GEMINI_QUOTA_EXHAUSTED
+    if not _GEMINI_QUOTA_EXHAUSTED:
+        for model_name in GEMINI_MODELS:
+            try:
+                res = gemini_client.models.generate_content(model=model_name, contents=prompt)
+                text = (res.text or "").strip().strip('"')
+                if text:
+                    return text
+            except Exception as e:
+                if "429" in str(e) and ("quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e)):
+                    _GEMINI_QUOTA_EXHAUSTED = True
+                    break
+                continue
 
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
@@ -745,7 +797,95 @@ def generate_script_via_groq_fallback(prompt, tags_string, tavily_query=None, sa
             print(f"⚠️ Groq fallback ({model_name}) error: {e}")
     return None
 
+def _quality_gate_rewrite_if_needed(data, tags_string, strategy=None):
+    """
+    Pre-Render Hook & SEO Critic Gate:
+    If the initial LLM draft scores < 65 on Hook Retention or dropped seo_tags/poll_question
+    (common on smaller fallback models), rewrite ONLY the weak hook and missing SEO fields once.
+    """
+    script_txt = (data.get("script") or "").strip()
+    h_score, h_props = score_script_hook(script_txt)
+    missing_seo = not data.get("seo_tags") or len(data.get("seo_tags") or []) < 4
+    missing_poll = not data.get("poll_question")
+
+    if h_score >= 65 and not missing_seo and not missing_poll:
+        return data
+
+    print(f"🛠️ Pre-Render Critic triggered (Hook={h_score}/100, missing_seo={missing_seo}, missing_poll={missing_poll}); upgrading before render...")
+    ret = (strategy or {}).get("retention_insights", {})
+    rec_sec = max(18, min(25, int(ret.get("recommended_target_sec", 22) or 22)))
+    word_rng = ret.get("recommended_word_range", [50, 62])
+
+    critic_prompt = f"""
+    Improve this YouTube Short's opening hook and missing SEO/engagement metadata WITHOUT changing the core subject.
+    Current Title: {data.get('title', '')}
+    Current Script ({len(script_txt.split())} words): {script_txt}
+    Hook Diagnostic Scores: {h_props}
+
+    Fix these specific issues:
+    1. Keep total spoken words between {word_rng[0]}-{word_rng[1]} words (~{rec_sec}s).
+    2. Upgrade the FIRST sentence (0-3s hook) so it starts mid-action with concrete numbers/time/stakes, danger/paradox words, and a curiosity gap (score >= 75/100). NEVER open with "Did you know" or "In this video".
+    3. Ensure the FINAL sentence loops grammatically into the FIRST word of the hook.
+    4. Provide 8 relevant 2-4 word search phrases in "seo_tags" matching the video topic and {tags_string}.
+    5. Provide a sharp, debate-sparking "poll_question" + 3 short "poll_options" and "pinned_comment".
+
+    Return ONLY valid JSON:
+    {{
+      "script": "...",
+      "description": "...",
+      "seo_tags": ["...", "..."],
+      "poll_question": "...",
+      "poll_options": ["...", "...", "..."],
+      "pinned_comment": "..."
+    }}
+    """
+    raw = generate_text_with_fallback(critic_prompt, temperature=0.65)
+    if not raw:
+        return data
+    try:
+        upgraded = extract_json_object(raw)
+        new_script = clean_script_retention(upgraded.get("script", ""))
+        if new_script:
+            new_score, new_props = score_script_hook(new_script)
+            if new_score > h_score:
+                data["script"] = new_script
+                print(f"✅ Critic upgraded Hook Score: {h_score}/100 -> {new_score}/100 {new_props}")
+        if upgraded.get("description"):
+            data["description"] = upgraded["description"].strip()
+        if isinstance(upgraded.get("seo_tags"), list) and len(upgraded["seo_tags"]) >= 3:
+            data["seo_tags"] = upgraded["seo_tags"]
+        if upgraded.get("poll_question"):
+            data["poll_question"] = upgraded["poll_question"]
+        if isinstance(upgraded.get("poll_options"), list) and len(upgraded["poll_options"]) >= 2:
+            data["poll_options"] = upgraded["poll_options"][:3]
+        if upgraded.get("pinned_comment"):
+            data["pinned_comment"] = upgraded["pinned_comment"]
+    except Exception as e:
+        print(f"⚠️ Critic JSON parse skipped, keeping original draft: {e}")
+    return data
+
+
+def _finalize_script_package(data, tags_string, strategy):
+    """Run pre-render Hook/SEO critic gate, lint title+thumbnail, and save cliffhanger if set."""
+    data = _quality_gate_rewrite_if_needed(data, tags_string, strategy=strategy)
+    data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+    h_score, h_props = score_script_hook(data.get("script", ""))
+    print(f"🎯 CineMind Final Hook Retention Score: {h_score}/100 {h_props}")
+    variants = data.get("title_variants")
+    if variants and isinstance(variants, list):
+        print("📊 CineMind A/B Title Candidates:")
+        for v in variants:
+            if isinstance(v, dict):
+                v["title"] = optimize_title(v.get("title", ""))
+                print(f"   [{v.get('type', 'Variant')}] {v['title']}")
+    if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
+        with open(CLIFFHANGER_FILE, "w", encoding="utf-8") as f:
+            f.write(data["cliffhanger_setup"])
+    return data
+
+
 def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None, retention_dropoff_sec=None, viewer_requests=None, strategy=None):
+    global _GEMINI_QUOTA_EXHAUSTED
     print("🧠 Asking Gemini to scan live web trends and write the script...")
 
     if strategy is None:
@@ -905,65 +1045,55 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
     }}
     """
 
-    for model_name in GEMINI_MODELS:
-        for attempt in range(3):
-            try:
-                response = gemini_client.models.generate_content(
-                    model=model_name,
-                    contents=prompt, 
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())]
+    if not _GEMINI_QUOTA_EXHAUSTED:
+        for model_name in GEMINI_MODELS:
+            for attempt in range(3):
+                try:
+                    response = gemini_client.models.generate_content(
+                        model=model_name,
+                        contents=prompt, 
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())]
+                        )
                     )
-                )
-                # response.text is a convenience shortcut that can return None when
-                # Google Search grounding produces a multi-part response (grounding
-                # metadata mixed with text) rather than one simple text block - that
-                # was crashing here with a cryptic 'NoneType has no attribute strip'.
-                # Fall back to manually walking the response parts if the shortcut fails.
-                raw_text = response.text
-                if raw_text is None:
-                    parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
-                    raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
-                if not raw_text:
-                    raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
+                    # response.text is a convenience shortcut that can return None when
+                    # Google Search grounding produces a multi-part response (grounding
+                    # metadata mixed with text) rather than one simple text block.
+                    raw_text = response.text
+                    if raw_text is None:
+                        parts = getattr(response.candidates[0].content, "parts", []) if response.candidates else []
+                        raw_text = "".join(p.text for p in parts if getattr(p, "text", None))
+                    if not raw_text:
+                        raise ValueError("Gemini returned an empty response (no text in any part) - likely a grounding-only or safety-filtered response.")
 
-                data = extract_json_object(raw_text)
-                data["script"] = clean_script_retention(data.get("script", ""))
-                data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
-                if attempt == 0:
-                    collides, col_reason = _has_topic_collision(data.get("title", ""), saturated_themes, avoid_topics)
-                    if collides:
-                        print(f"🔄 Rejecting repetitive Gemini draft '{data.get('title')}' ({col_reason}); retrying once...")
-                        prompt += f"\n\nCRITICAL REJECTION: Never write about '{data.get('title')}' ({col_reason}). Pick a 100% NEW topic."
-                        continue
-                h_score, h_props = score_script_hook(data.get("script", ""))
-                print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
-                variants = data.get("title_variants")
-                if variants and isinstance(variants, list):
-                    print("📊 CineMind A/B Title Candidates:")
-                    for v in variants:
-                        if isinstance(v, dict):
-                            v["title"] = optimize_title(v.get("title", ""))
-                            print(f"   [{v.get('type', 'Variant')}] {v['title']}")
-                if data.get("is_cliffhanger") and data.get("cliffhanger_setup"):
-                    with open(CLIFFHANGER_FILE, "w") as f: f.write(data["cliffhanger_setup"])
-                return data
-            except Exception as e:
-                err_str = str(e)
-                print(f"⚠️ Gemini ({model_name}) Attempt {attempt + 1} Failed: {e}")
-                if "404" in err_str or "NOT_FOUND" in err_str:
-                    break  # Don't burn retries on a retired/non-existent model
-                if "429" in err_str or "503" in err_str:
-                    if "PerDay" in err_str or "per day" in err_str or "retry in" in err_str or "limit exceeded" in err_str or "quota" in err_str.lower():
-                        print("ℹ️ Gemini quota/limit reached; switching immediately to Groq fallback...")
+                    data = extract_json_object(raw_text)
+                    data["script"] = clean_script_retention(data.get("script", ""))
+                    data["title"], data["thumbnail_text"] = lint_title_thumbnail_pair(data.get("title", ""), data.get("thumbnail_text", ""))
+                    if attempt == 0:
+                        collides, col_reason = _has_topic_collision(data.get("title", ""), saturated_themes, avoid_topics)
+                        if collides:
+                            print(f"🔄 Rejecting repetitive Gemini draft '{data.get('title')}' ({col_reason}); retrying once...")
+                            prompt += f"\n\nCRITICAL REJECTION: Never write about '{data.get('title')}' ({col_reason}). Pick a 100% NEW topic."
+                            continue
+                    return _finalize_script_package(data, tags_string, strategy)
+                except Exception as e:
+                    err_str = str(e)
+                    print(f"⚠️ Gemini ({model_name}) Attempt {attempt + 1} Failed: {e}")
+                    if "404" in err_str or "NOT_FOUND" in err_str:
                         break
-                    # Fast backoff: 5s, 15s, 30s instead of long stalls
-                    time.sleep([5, 15, 30][attempt])
-                else:
-                    time.sleep(3)
-        print(f"ℹ️ Giving up on {model_name}, trying next model if available...")
+                    if "429" in err_str or "503" in err_str:
+                        if "PerDay" in err_str or "per day" in err_str or "retry in" in err_str or "limit exceeded" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
+                            _GEMINI_QUOTA_EXHAUSTED = True
+                            print("ℹ️ Gemini quota/limit reached; tripping per-run circuit breaker and switching immediately to Groq...")
+                            break
+                        time.sleep([5, 15, 30][attempt])
+                    else:
+                        time.sleep(3)
+            if _GEMINI_QUOTA_EXHAUSTED:
+                break
+            print(f"ℹ️ Giving up on {model_name}, trying next model if available...")
 
-    print("ℹ️ All Gemini models exhausted - trying Groq fallback before giving up entirely...")
+    print("ℹ️ Using Groq engine for script generation...")
     fallback_data = generate_script_via_groq_fallback(
         prompt,
         tags_string,
@@ -972,12 +1102,7 @@ def generate_script(avoid_topics=None, boost_topics=None, dynamic_tags_list=None
         avoid_topics=avoid_topics,
     )
     if fallback_data:
-        fallback_data["title"], fallback_data["thumbnail_text"] = lint_title_thumbnail_pair(fallback_data.get("title", ""), fallback_data.get("thumbnail_text", ""))
-        h_score, h_props = score_script_hook(fallback_data.get("script", ""))
-        print(f"🎯 CineMind Hook Retention Score: {h_score}/100 {h_props}")
-        if fallback_data.get("is_cliffhanger") and fallback_data.get("cliffhanger_setup"):
-            with open(CLIFFHANGER_FILE, "w") as f: f.write(fallback_data["cliffhanger_setup"])
-        return fallback_data
+        return _finalize_script_package(fallback_data, tags_string, strategy)
 
     raise Exception("Failed to get response from Gemini (all models exhausted) and Groq fallback also failed or wasn't configured.")
 
@@ -1039,13 +1164,17 @@ def _read_audio_duration(audio_path):
         clip.close()
 
 
-async def generate_audio_and_timestamps(text):
+async def generate_audio_and_timestamps(text, preferred_voice=None, rate="+8%"):
     words = []
-    edge_voices = [VOICE] + [v for v in ("en-US-JennyNeural", "en-US-GuyNeural") if v != VOICE]
+    primary = preferred_voice or VOICE
+    edge_voices = [primary] + [v for v in ("en-US-ChristopherNeural", "en-US-AriaNeural", "en-US-GuyNeural") if v != primary]
     for voice_name in edge_voices[:2]:
         try:
-            print(f"🎙️ Generating AI Voiceover ({voice_name})...")
-            communicate = edge_tts.Communicate(text, voice_name)
+            print(f"🎙️ Generating AI Voiceover ({voice_name}, rate={rate})...")
+            try:
+                communicate = edge_tts.Communicate(text, voice_name, rate=rate)
+            except TypeError:
+                communicate = edge_tts.Communicate(text, voice_name)
             attempt_words = []
             with open(OUTPUT_AUDIO, "wb") as fp:
                 async for chunk in communicate.stream():
@@ -1251,9 +1380,53 @@ def _fetch_nasa_video(query, used_ids):
     return None, None
 
 
-def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
+def _generate_ai_scene_image(prompt, visual_theme, jpg_path, pol_api):
+    """Generate a custom 9:16 vertical AI keyframe via Flow or Pollinations."""
+    try:
+        import flow_engine
+        if flow_engine.is_flow_available():
+            flow_img = flow_engine.generate_flow_image(f"{prompt}, {visual_theme}", out_path=jpg_path)
+            if flow_img and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 10000:
+                return True, "Google Flow visual"
+    except Exception:
+        pass
+
+    full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
+    for _attempt in range(3):
+        if safe_download(
+            f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}",
+            jpg_path,
+            20000,
+        ):
+            return True, "custom AI parallax keyframe"
+        time.sleep(2)
+    return False, None
+
+
+def _download_stock_scene(search_candidates, mp4_path, used_video_ids, prefer_pexels=False):
+    """Fetch a validated HD stock clip, alternating Pexels portrait and Pixabay for variety."""
+    fetchers = (
+        (_fetch_pexels_video, _fetch_pixabay_video, _fetch_nasa_video)
+        if prefer_pexels
+        else (_fetch_pixabay_video, _fetch_pexels_video, _fetch_nasa_video)
+    )
+    for q in search_candidates:
+        for fetcher in fetchers:
+            url, vid_key = fetcher(q, used_video_ids)
+            if url and safe_download(url, mp4_path, min_bytes=50000):
+                if _is_valid_video_file(mp4_path):
+                    used_video_ids.add(vid_key)
+                    return True, vid_key, q
+                try:
+                    os.remove(mp4_path)
+                except OSError:
+                    pass
+    return False, None, None
+
+
+def download_visual_media(image_prompts, video_queries=None, visual_theme="", ai_scene_indices=(3, 6)):
     """Fetch a hybrid of real HD stock videos (.mp4) and custom AI parallax visuals (.jpg)."""
-    print("🎬 Sourcing Hybrid Stock Videos + Custom AI Visuals...")
+    print("🎬 Sourcing Hybrid Stock Videos + Custom AI Parallax Keyframes...")
     for stale in os.listdir("media"):
         if stale.startswith("clip_") and stale.endswith((".mp4", ".jpg")):
             try:
@@ -1266,11 +1439,12 @@ def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
     used_video_ids = set()
     video_count = 0
     image_count = 0
-
+    ai_targets = set(ai_scene_indices or ())
     custom_clip_url = os.environ.get("CUSTOM_CLIP_URL", "").strip()
 
     for index, prompt in enumerate(image_prompts):
         mp4_path = f"media/clip_{index}.mp4"
+        jpg_path = f"media/clip_{index}.jpg"
         if index == 0:
             if custom_clip_url and custom_clip_url.startswith("http"):
                 print(f"🎬 Ingesting custom Google Flow / Veo clip from: {custom_clip_url[:60]}...")
@@ -1295,52 +1469,25 @@ def download_visual_media(image_prompts, video_queries=None, visual_theme=""):
         fallback_words = " ".join(prompt.split()[:3])
         search_candidates = [q for q in (raw_query, " ".join(raw_query.split()[:2]), fallback_words) if q]
 
-        got_video = False
-        mp4_path = f"media/clip_{index}.mp4"
-        for q in search_candidates:
-            for fetcher in (_fetch_pixabay_video, _fetch_pexels_video, _fetch_nasa_video):
-                url, vid_key = fetcher(q, used_video_ids)
-                if url and safe_download(url, mp4_path, min_bytes=50000):
-                    if _is_valid_video_file(mp4_path):
-                        used_video_ids.add(vid_key)
-                        got_video = True
-                        video_count += 1
-                        print(f"   🎥 Scene {index}: stock video ({vid_key}) for '{q}'")
-                        break
-                    try:
-                        os.remove(mp4_path)
-                    except OSError:
-                        pass
-            if got_video:
-                break
+        if index in ai_targets:
+            ok_ai, ai_src = _generate_ai_scene_image(prompt, visual_theme, jpg_path, pol_api)
+            if ok_ai:
+                image_count += 1
+                print(f"   🎨 Scene {index}: {ai_src} (Climax AI beat)")
+                continue
 
-        if not got_video:
-            jpg_path = f"media/clip_{index}.jpg"
-            got_flow_scene = False
-            try:
-                import flow_engine
-                if flow_engine.is_flow_available():
-                    print(f"   🎨 Scene {index}: generating with Google Flow (Nano Banana)...")
-                    flow_img = flow_engine.generate_flow_image(f"{prompt}, {visual_theme}", out_path=jpg_path)
-                    if flow_img and os.path.exists(jpg_path) and os.path.getsize(jpg_path) > 10000:
-                        image_count += 1
-                        got_flow_scene = True
-                        print(f"   ✅ Scene {index}: Google Flow visual generated cleanly!")
-            except Exception as fe:
-                pass
+        ok_stock, vid_key, matched_q = _download_stock_scene(
+            search_candidates, mp4_path, used_video_ids, prefer_pexels=(index % 2 == 1)
+        )
+        if ok_stock:
+            video_count += 1
+            print(f"   🎥 Scene {index}: stock video ({vid_key}) for '{matched_q}'")
+            continue
 
-            if not got_flow_scene:
-                full_prompt = f"{prompt}, {visual_theme}, photorealistic, cinematic lighting, full frame, no borders, 8k resolution, octane render"
-                for _attempt in range(4):
-                    if safe_download(
-                        f"{pol_api}{urllib.parse.quote(full_prompt)}?width=1080&height=1920&nologo=true&seed={random.randint(1, 999999)}",
-                        jpg_path,
-                        20000,
-                    ):
-                        image_count += 1
-                        print(f"   🎨 Scene {index}: custom AI visual fallback")
-                        break
-                    time.sleep(2)
+        ok_ai, ai_src = _generate_ai_scene_image(prompt, visual_theme, jpg_path, pol_api)
+        if ok_ai:
+            image_count += 1
+            print(f"   🎨 Scene {index}: {ai_src} (fallback)")
 
     print(f"✅ Media ready: {video_count} stock video clips + {image_count} AI parallax scenes.")
 
@@ -1556,6 +1703,118 @@ def render_3d_word(text, fontsize=120, fill=(255, 255, 0), depth=10, depth_color
     draw.text((ox, oy), text, font=font, fill=fill + (255,), stroke_width=6, stroke_fill=(0, 0, 0, 255))
     return np.array(img)
 
+def _group_words_into_phrases(word_items, max_words=3, max_chars=18):
+    """Group word timestamps into readable 2-3 word chunks without crossing sentence ends."""
+    phrases = []
+    buf = []
+    for idx, item in enumerate(word_items):
+        raw = str(item.get("text") or "").strip()
+        clean = raw.strip(".,!?\"'").upper()
+        if not clean:
+            continue
+        start_t = float(item.get("start", 0.0))
+        end_t = float(word_items[idx + 1]["start"]) if idx + 1 < len(word_items) else float(item.get("end", start_t + 0.3)) + 0.2
+        projected_chars = sum(len(x["clean"]) for x in buf) + len(clean) + len(buf)
+        if buf and (len(buf) >= max_words or projected_chars > max_chars):
+            phrases.append(buf)
+            buf = []
+        buf.append({"clean": clean, "start": start_t, "end": max(start_t + 0.08, end_t)})
+        if raw.endswith((".", "!", "?", ";")):
+            phrases.append(buf)
+            buf = []
+    if buf:
+        phrases.append(buf)
+    return phrases
+
+
+def render_phrase_caption(phrase_tokens, active_idx, fontsize=92, max_width=940):
+    """Render a 2-3 word horizontal caption with active-word gold/impact highlighting inside a contrast pill."""
+    from PIL import Image, ImageDraw
+    tmp = Image.new("RGBA", (10, 10))
+    draw_tmp = ImageDraw.Draw(tmp)
+    words_upper = [tok["clean"] for tok in phrase_tokens]
+    joined = " ".join(words_upper)
+
+    current_size = fontsize
+    font = _load_bold_font(current_size)
+    while current_size > 48:
+        font = _load_bold_font(current_size)
+        bbox = draw_tmp.textbbox((0, 0), joined, font=font, stroke_width=6)
+        if (bbox[2] - bbox[0]) + 64 <= max_width:
+            break
+        current_size -= 6
+
+    space_w = max(14, int(current_size * 0.30))
+    word_boxes = [draw_tmp.textbbox((0, 0), w, font=font, stroke_width=6) for w in words_upper]
+    word_widths = [b[2] - b[0] for b in word_boxes]
+    min_top = min((b[1] for b in word_boxes), default=0)
+    max_bottom = max((b[3] for b in word_boxes), default=current_size)
+    max_h = max(1, max_bottom - min_top)
+    total_text_w = sum(word_widths) + space_w * max(0, len(words_upper) - 1)
+
+    pad_x, pad_y = 32, 20
+    W, H = total_text_w + pad_x * 2, max_h + pad_y * 2 + 12
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    try:
+        draw.rounded_rectangle([(0, 0), (W - 1, H - 1)], radius=24, fill=(10, 14, 24, 175))
+    except AttributeError:
+        draw.rectangle([(0, 0), (W - 1, H - 1)], fill=(10, 14, 24, 175))
+
+    x_cursor = pad_x
+    shared_oy = pad_y - min_top
+    for i, w_text in enumerate(words_upper):
+        b = word_boxes[i]
+        is_active = (i == active_idx)
+        impact = is_high_impact(w_text)
+        if is_active:
+            fill, _ = get_word_color_hierarchy(w_text)
+            if fill == (255, 255, 255):
+                fill = (255, 215, 0)  # Active word pops in Gold
+        elif impact:
+            fill = (0, 240, 220)
+        else:
+            fill = (242, 245, 250)
+
+        oy = shared_oy + (0 if is_active else 2)
+        ox = x_cursor - b[0]
+        if is_active:
+            draw.text((ox + 5, oy + 5), w_text, font=font, fill=(0, 0, 0, 200))
+        draw.text((ox, oy), w_text, font=font, fill=fill + (255,), stroke_width=6, stroke_fill=(0, 0, 0, 255))
+        x_cursor += word_widths[i] + space_w
+
+    return np.array(img)
+
+
+def get_series_badge_clips(badge_text, total_duration):
+    """Overlay a sleek micro-series badge top-left in opening & closing windows to encourage subscriptions."""
+    if not badge_text or total_duration <= 2.0:
+        return []
+    from PIL import Image, ImageDraw
+    font = _load_bold_font(34)
+    tmp = Image.new("RGBA", (10, 10))
+    bbox = ImageDraw.Draw(tmp).textbbox((0, 0), badge_text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    pad_x, pad_y = 22, 12
+    W, H = tw + pad_x * 2, th + pad_y * 2
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    try:
+        draw.rounded_rectangle([(0, 0), (W - 1, H - 1)], radius=18, fill=(14, 20, 34, 200), outline=(255, 215, 0, 220), width=3)
+    except AttributeError:
+        draw.rectangle([(0, 0), (W - 1, H - 1)], fill=(14, 20, 34, 200))
+    draw.text((pad_x - bbox[0], pad_y - bbox[1]), badge_text, font=font, fill=(255, 215, 0, 255))
+    arr = np.array(img)
+
+    badge_clips = []
+    open_dur = min(3.8, total_duration)
+    badge_clips.append(ImageClip(arr).set_position((48, 88)).set_start(0).set_duration(open_dur))
+    if total_duration > 9.0:
+        tail_start = max(open_dur + 1.0, total_duration - 2.8)
+        badge_clips.append(ImageClip(arr).set_position((48, 88)).set_start(tail_start).set_duration(total_duration - tail_start))
+    return badge_clips
+
+
 def is_high_impact(word):
     impact_words = {
         "MILLION", "BILLION", "TRILLION", "SECRET", "SHOCKING", "MYSTERY", "ONLY",
@@ -1661,17 +1920,29 @@ def _prepare_stock_video_clip(video_path, duration, start_time=0.0, impact_times
     return cropped.fl(kinetic_grade).set_fps(fps).set_duration(duration), opened_handles
 
 
-def assemble_video(dynamic_sfx_map, brief=None):
+def assemble_video(dynamic_sfx_map, brief=None, strategy=None, series_badge=None):
     print("\n🎬 Assembling cinematic video (CineMind Autonomous Video Editor Engine)...")
     brief = brief or determine_creative_direction({"visual_theme": "cinematic"})
+    if strategy is None:
+        try:
+            import analytics_engine
+            strategy = analytics_engine.load_active_strategy()
+        except Exception:
+            strategy = {}
+
     voice_audio = AudioFileClip(OUTPUT_AUDIO)
     audio_tracks = [voice_audio]
     opened_video_handles = [voice_audio]
     
     with open("words.json", "r") as f: words = json.load(f)
     
-    # Map the exact seconds where a high-impact word is spoken
+    # Map the exact seconds where a high-impact word is spoken + pre-drop interrupt before steepest curve drop
     impact_timestamps = [w["start"] for w in words if is_high_impact(w["text"].strip(".,!?\"'").upper())]
+    steep_drop = float(strategy.get("retention_insights", {}).get("steepest_drop_sec", 5.0) or 5.0)
+    pre_drop_accent = max(1.8, steep_drop - 0.5)
+    if pre_drop_accent < voice_audio.duration - 1.0:
+        impact_timestamps.append(pre_drop_accent)
+    hook_danger_window = max(5.5, min(9.0, steep_drop + 1.0))
     
     if os.path.exists("background_music.mp3"):
         def filter_audio(get_frame, t):
@@ -1708,7 +1979,7 @@ def assemble_video(dynamic_sfx_map, brief=None):
     boundary_index = 0
     has_sfx = os.path.exists("whoosh.mp3") and os.path.exists("pop.mp3")
 
-    # 2. Loop through the calculated boundaries (snappier <=2.5s hook cuts, <=3.8s body)
+    # 2. Adaptive retention cuts: faster 1.6s pattern interrupts across hook/drop zone, 2.6s body
     while current_time < voice_audio.duration and boundary_index < len(sentence_boundaries):
         media_path = media_files[media_index % len(media_files)]
         
@@ -1716,7 +1987,7 @@ def assemble_video(dynamic_sfx_map, brief=None):
         target_end = min(sentence_boundaries[boundary_index], voice_audio.duration)
         clip_dur = target_end - current_time
         
-        max_seg = 2.5 if current_time < 3.0 else 3.8
+        max_seg = 1.6 if current_time < hook_danger_window else 2.6
         if clip_dur > max_seg:
             clip_dur = max_seg
         else:
@@ -1792,41 +2063,38 @@ def assemble_video(dynamic_sfx_map, brief=None):
         current_time += clip_dur
         media_index += 1
 
-    # --- KINETIC TYPOGRAPHY ENGINE ---
+    # --- KINETIC PHRASE TYPOGRAPHY ENGINE (2-3 word chunks with active-word highlight) ---
+    for stale_png in os.listdir("media"):
+        if stale_png.startswith(("temp_word_", "temp_phrase_")) and stale_png.endswith(".png"):
+            try:
+                os.remove(os.path.join("media", stale_png))
+            except OSError:
+                pass
     text_clips = []
-    
-    for i, w in enumerate(words):
-        start_t = w["start"]
-        # Extend end time seamlessly to the next word so the screen never flickers blank
-        end_t = words[i+1]["start"] if i + 1 < len(words) else w["end"] + 0.2
-        
-        clean_text = w["text"].strip(".,!?\"'").upper()
-        if not clean_text: continue
-            
-        impact = is_high_impact(clean_text)
-        
-        # CineMind Department D: Word-level visual & semantic hierarchy
-        size = 145 if impact else 120
-        fill, depth_col = get_word_color_hierarchy(clean_text)
-        
-        word_array = render_3d_word(clean_text, fontsize=size, fill=fill, depth=8, depth_color=depth_col)
-        
-        temp_img_path = f"media/temp_word_{i}.png"
-        PIL.Image.fromarray(word_array).save(temp_img_path)
-        
-        # Center the text directly in the viewer's focal path
-        txt_clip = ImageClip(temp_img_path, transparent=True).set_position(('center', 1150)).set_start(start_t).set_end(end_t)
-        
-        # CineMind Elastic Pop: Snappy viral bounce for opening hook words and impact terms
-        if i < 3 or impact:
-            txt_clip = txt_clip.resize(lambda t: max(1.0, 1.0 + 0.25 * math.exp(-max(0.0, t) * 12.0) * math.cos(max(0.0, t) * 18.0)))
-        else:
-            txt_clip = txt_clip.resize(lambda t: max(1.0, 1.0 + 0.12 * math.exp(-max(0.0, t) * 14.0)))
+    phrases = _group_words_into_phrases(words, max_words=3, max_chars=18)
+    step_idx = 0
 
-        if impact and has_sfx: 
-            audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.2))
-            
-        text_clips.append(txt_clip)
+    for phrase in phrases:
+        for local_i, tok in enumerate(phrase):
+            start_t = tok["start"]
+            end_t = min(voice_audio.duration, tok["end"])
+            if end_t <= start_t:
+                continue
+
+            impact = is_high_impact(tok["clean"])
+            phrase_array = render_phrase_caption(phrase, active_idx=local_i, fontsize=92, max_width=940)
+            temp_img_path = f"media/temp_phrase_{step_idx}.png"
+            PIL.Image.fromarray(phrase_array).save(temp_img_path)
+
+            txt_clip = ImageClip(temp_img_path, transparent=True).set_position(('center', 1120)).set_start(start_t).set_end(end_t)
+            # Subtle viral bounce on phrase starts and impact beats
+            if local_i == 0 or impact:
+                txt_clip = txt_clip.resize(lambda t: max(1.0, 1.0 + 0.14 * math.exp(-max(0.0, t) * 14.0)))
+            if impact and has_sfx:
+                audio_tracks.append(AudioFileClip("pop.mp3").set_start(start_t).fx(afx.volumex, 0.18))
+
+            text_clips.append(txt_clip)
+            step_idx += 1
 
     retention_bar = ColorClip(size=(1080, 15), color=(255, 255, 0)).set_position(lambda t: (-1080 + int(1080 * (t / voice_audio.duration)), 0)).set_duration(voice_audio.duration)
     
@@ -1837,7 +2105,7 @@ def assemble_video(dynamic_sfx_map, brief=None):
     final_audio = CompositeAudioClip(audio_tracks)
     # CineMind Zero-Gap Loop: Smooth micro-crossfade to prevent digital click when player loops
     final_audio = final_audio.fx(afx.audio_fadein, 0.05).fx(afx.audio_fadeout, 0.05)
-    extra_layers = [retention_bar]
+    extra_layers = [retention_bar] + get_series_badge_clips(series_badge, voice_audio.duration)
     watermark = get_watermark_clip(voice_audio.duration)
     if watermark:
         extra_layers.append(watermark)
@@ -1989,7 +2257,7 @@ def upload_to_youtube(video_file, data, credentials):
         affiliate_block = f"👇 Gear up:\n{affiliate_link}"
 
     theme_label = sanitize_theme_label(data.get("visual_theme", ""))
-    playlist_title = f"{theme_label.title()} Mysteries" if theme_label else "CineMind Mysteries"
+    playlist_title = data.get("_series_playlist_title") or (f"{theme_label.title()} Mysteries" if theme_label else "CineMind Mysteries")
     full_description = build_seo_description(data, hashtags, affiliate_block, playlist_title=playlist_title)
     body = {
         "snippet": {
@@ -2222,14 +2490,13 @@ def sanitize_theme_label(visual_theme, max_words=3, max_chars=40):
     label = " ".join(words)[:max_chars].strip()
     return label
 
-def add_video_to_themed_playlist(youtube, video_id, visual_theme, max_retries=3):
-    """Groups videos into themed playlists (e.g. 'Space Mysteries'). Playlists
-    drive session watch time via autoplay-into-next-video - a heavy YouTube
-    ranking signal we weren't using before."""
+def add_video_to_themed_playlist(youtube, video_id, visual_theme, max_retries=3, playlist_title_override=None):
+    """Groups videos into consistent series playlists (e.g. 'Mind Glitches & Dark Psychology')
+    to accumulate 20-50 Shorts per playlist and drive session autoplay watch time."""
     theme_label = sanitize_theme_label(visual_theme)
-    if not theme_label:
+    playlist_title = (playlist_title_override or "").strip() or (f"{theme_label.title()} Mysteries" if theme_label else "")
+    if not playlist_title:
         return
-    playlist_title = f"{theme_label.title()} Mysteries"
 
     for attempt in range(max_retries):
         try:
@@ -2333,9 +2600,15 @@ async def main():
     viral_tags = fetch_high_reach_tags(credentials)
     viewer_requests = load_viewer_requests()
     
+    topic_history = load_topic_history()
+    archetype_id = strategy.get("active_archetype", {}).get("id")
+    _, series_cfg = get_series_info(archetype_id)
+    series_badge = f"{series_cfg['badge_prefix']} #{len(topic_history) + 1}"
+    niche_voice = select_niche_voice(archetype_id)
+
     # Pass the tags, weekly dashboard strategy, and viewer demand into the AI generator
     content = generate_script(
-        avoid_topics=[h["title"] for h in load_topic_history()], 
+        avoid_topics=[h["title"] for h in topic_history], 
         boost_topics=boost_topics,
         dynamic_tags_list=viral_tags,
         retention_dropoff_sec=retention_dropoff_sec,
@@ -2343,10 +2616,12 @@ async def main():
         strategy=strategy,
     )
     content["_channel_tags"] = viral_tags
+    content["_series_playlist_title"] = series_cfg["playlist_title"]
+    content["_series_badge"] = series_badge
     # CineMind Department B: Formulate the structured creative brief
     brief = determine_creative_direction(content)
 
-    await generate_audio_and_timestamps(content["script"])
+    await generate_audio_and_timestamps(content["script"], preferred_voice=niche_voice, rate="+8%")
     download_visual_media(
         content["image_prompts"],
         video_queries=content.get("video_queries", []),
@@ -2374,13 +2649,13 @@ async def main():
     dynamic_sfx_map = download_dynamic_sfx(content.get("sfx_cues", []))
     save_community_post(content)
     
-    # CineMind Departments A, C, D, E: Assemble timeline, grade, format kinetic typography & review
-    assemble_video(dynamic_sfx_map, brief=brief)
+    # CineMind Departments A, C, D, E: Assemble timeline, grade, active phrase typography & series badge
+    assemble_video(dynamic_sfx_map, brief=brief, strategy=strategy, series_badge=series_badge)
     
     vid_id, aff_link = upload_to_youtube("final_short.mp4", content, credentials)
     if vid_id:
         post_auto_comment(vid_id, content["script"], aff_link, credentials, preset_comment=content.get("pinned_comment"))
-        save_topic_history({"title": content["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d")})
+        save_topic_history({"title": content["title"], "video_id": vid_id, "date": time.strftime("%Y-%m-%d"), "series": series_badge})
         save_longform_expansion_seed(content)
         if viewer_requests:
             try:
@@ -2397,7 +2672,12 @@ async def main():
             except Exception:
                 pass
         youtube_client = build("youtube", "v3", credentials=credentials)
-        add_video_to_themed_playlist(youtube_client, vid_id, content.get("visual_theme", ""))
+        add_video_to_themed_playlist(
+            youtube_client,
+            vid_id,
+            content.get("visual_theme", ""),
+            playlist_title_override=series_cfg["playlist_title"],
+        )
         send_telegram_notification(content.get("title", ""), vid_id, content.get("thumbnail_text", ""))
     repost_via_zernio("final_short.mp4", content)
 
