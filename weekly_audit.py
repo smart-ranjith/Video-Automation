@@ -112,7 +112,66 @@ def run_local_tools() -> dict:
         except Exception as e:
             print(f"⚠️ Title lint skipped: {e}")
 
+    # 6. Niche outlier formula analysis (if collected_outliers.json exists)
+    outliers_path = os.path.join(SCRIPT_DIR, "collected_outliers.json")
+    if os.path.exists(outliers_path):
+        try:
+            from tools.swipe import find_outliers
+            with open(outliers_path, encoding="utf-8") as fh:
+                rows = json.load(fh)
+            sw = find_outliers(rows, min_multiple=1.5)
+            result["niche_outliers"] = {
+                "outlier_count": len(sw["outliers"]),
+                "top_formulas": sw["formula_counts"],
+                "top_3": sw["outliers"][:3],
+            }
+            print(f"🚀 Niche Outliers: {len(sw['outliers'])} found | Top formulas: {sw['formula_counts']}")
+        except Exception as e:
+            print(f"⚠️ Niche outlier scan skipped: {e}")
+
     return result
+
+
+def distill_one_fix(report: dict) -> dict:
+    """yt-audit rule: end in ONE prioritized fix rather than twenty items."""
+    local = report.get("local_tools", {})
+    dash = report.get("dashboard", {})
+    ret_csv = local.get("retention_audit", {})
+    ret_api = dash.get("retention_insights", {})
+    hook = local.get("last_hook_score", {})
+    title_lint = local.get("title_lint", {})
+    div = dash.get("topic_diversity", {})
+
+    working_well = []
+    if hook.get("verdict", 0) >= 72:
+        working_well.append(f"Opening hook scored {hook['verdict']}/100 ({hook.get('band')}).")
+    if title_lint.get("pass"):
+        working_well.append(f"Title + thumbnail packaging passed lint ({title_lint.get('score')}/100).")
+    if div.get("diversity_score", 100) >= 70:
+        working_well.append(f"Topic diversity is healthy ({div.get('diversity_score')}/100).")
+
+    # Priority order from yt-audit: Packaging/Title -> First 15s Hook -> Retention Leak -> Topic Diversity
+    one_fix = "Keep current cadence and monitor next 7-day retention curve."
+    do_not_do = "Do not rewrite the middle of scripts before fixing the opening 5 seconds."
+
+    if title_lint and not title_lint.get("pass", True):
+        issues = ", ".join(k for k, _ in title_lint.get("issues", []))
+        one_fix = f"Fix title/thumbnail packaging ({issues}) before next upload — aim for >= 60/100 lint score."
+    elif hook and hook.get("verdict", 100) < 55:
+        one_fix = f"Rewrite opening hook (scored {hook['verdict']}/100, weakest: {hook.get('weakest')}). {hook.get('fix_tip', '')}"
+    elif ret_csv and ret_csv.get("hook_leak", 0) >= 25:
+        one_fix = f"Fix 30s hook leak ({ret_csv['hook_leak']}% lost [{ret_csv.get('hook_verdict')}]): tighten the first sentence to confirm the title immediately."
+    elif ret_api.get("weak_3s_hook_hold_pct") is not None and ret_api.get("weak_3s_hook_hold_pct", 100) < 65:
+        one_fix = f"Raise weak-video 3s hook hold ({ret_api['weak_3s_hook_hold_pct']}% vs winners {ret_api.get('winner_3s_hook_hold_pct')}%): cut faster at 0-3s."
+    elif div and div.get("diversity_score", 100) < 55:
+        banned = ", ".join(div.get("saturated_themes_to_ban", [])[:4])
+        one_fix = f"Break topic repetition (diversity {div['diversity_score']}/100): avoid {banned} this week."
+
+    return {
+        "one_fix": one_fix,
+        "working_well": working_well,
+        "do_not_do_yet": do_not_do,
+    }
 
 
 def run_full_audit(force: bool = False, local_only: bool = False) -> dict:
@@ -136,6 +195,10 @@ def run_full_audit(force: bool = False, local_only: bool = False) -> dict:
         except Exception as e:
             print(f"⚠️ Dashboard analysis skipped: {e}")
             report["dashboard"] = {"error": str(e)}
+
+    # Distill ONE prioritized fix (yt-audit)
+    report["audit_verdict"] = distill_one_fix(report)
+    print(f"\n🎯 ONE FIX THIS WEEK: {report['audit_verdict']['one_fix']}")
 
     # Save combined report
     with open(REPORT_PATH, "w", encoding="utf-8") as f:

@@ -19,10 +19,13 @@ Python API:
 import json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-_HOOKS_JSON = os.path.join(HERE, "..", "youtube-agent-skill", "skills", "yt-script", "hooks.json")
+_HOOKS_JSON = os.path.join(HERE, "hooks.json")
+if not os.path.exists(_HOOKS_JSON):
+    _HOOKS_JSON = os.path.join(HERE, "..", "youtube-agent-skill", "skills", "yt-script", "hooks.json")
 
 try:
-    FORMULAS = json.load(open(_HOOKS_JSON))["hooks"]
+    with open(_HOOKS_JSON, encoding="utf-8") as _fh:
+        FORMULAS = json.load(_fh)["hooks"]
 except FileNotFoundError:
     FORMULAS = []
 
